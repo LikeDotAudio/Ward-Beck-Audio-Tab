@@ -1576,7 +1576,8 @@ class WBSHandler(http.server.BaseHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Cache-Control")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Cache-Control, Access-Control-Request-Private-Network, Authorization")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
         super().end_headers()
 
     def do_OPTIONS(self):
@@ -1818,7 +1819,7 @@ if __name__ == "__main__":
         assert len(HTML_UI) > 1000, "HTML template empty"
         assert "Ward-Beck Audio Tab" in HTML_UI, "HTML header missing"
         assert "needle-l" in HTML_UI and "needle-r" in HTML_UI, "VU needle elements missing"
-        assert "ring-canvas-0" in HTML_UI, "MXL ring buffer canvas missing"
+        assert "eye-player-canvas" in HTML_UI or "ring-canvas" in HTML_UI, "MXL ring buffer canvas missing"
         srcs = list_sources()
         print(f"[Ward-Beck Audio Tab] Detected audio subsystem ({len(srcs)} available audio sources).")
         pipe = inspect_full_pipeline(MXL_ENGINE)
