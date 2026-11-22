@@ -1,0 +1,3 @@
+[submodule "mxl-hands-on"]
+	path = mxl-hands-on
+	url = https://github.com/cbcrc/mxl-hands-on
