@@ -2294,6 +2294,11 @@ async function setBitBuddySr(sr) {
   pollStatus();
 }
 
+async function forceRouteSpeakers() {
+  await fetch('/api/force_speakers', {method: 'POST'});
+  pollStatus();
+}
+
 async function fullRestart() {
   if (abandoned) return;
   document.getElementById('tapped-info').textContent = 'RESTARTING BUSES...';
@@ -2616,6 +2621,18 @@ class WBSHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({
                 "active": BITBUDDY_ACTIVE,
                 "config": BITBUDDY_CONFIG
+            }).encode("utf-8"))
+        elif parsed.path == "/api/force_speakers":
+            with STATE_LOCK:
+                ACTIVE_ROUTES["speaker_split"] = True
+                apply_routes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "ok",
+                "speaker_split": True,
+                "physical_sink": PHYSICAL_SINK
             }).encode("utf-8"))
         elif parsed.path == "/api/cbc/pattern":
             data = json.loads(body)
