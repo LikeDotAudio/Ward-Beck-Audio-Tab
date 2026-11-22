@@ -10,6 +10,12 @@ volumes:
       type: none
       device: /dev/shm/mxl/domain_1
       o: "bind,nosuid,strictatime"
+  mxl-wbs-test-signals:
+    driver: local
+    driver_opts:
+      type: none
+      device: /dev/shm/mxl/domain-wbs-test-signals
+      o: "bind,nosuid,strictatime"
 
 services:
   # MediaMTX WebRTC Server for low-latency browser streaming
@@ -35,6 +41,9 @@ services:
       - type: volume
         source: mxl-domain
         target: /mxl-domain
+      - type: volume
+        source: mxl-wbs-test-signals
+        target: /mxl-wbs-test-signals
     environment:
       - MXL_DOMAIN=/mxl-domain
       - MEDIAMTX_WHIP_URL=http://host.docker.internal:8889/mxl2webrtc/whip
@@ -58,6 +67,9 @@ services:
       - type: volume
         source: mxl-domain
         target: /mxl-domain
+      - type: volume
+        source: mxl-wbs-test-signals
+        target: /mxl-wbs-test-signals
     restart: unless-stopped
 
   # File / Clip Player: Publishes looped video and audio clips into MXL
@@ -94,6 +106,9 @@ services:
       - type: volume
         source: mxl-domain
         target: /mxl-domain
+      - type: volume
+        source: mxl-wbs-test-signals
+        target: /mxl-wbs-test-signals
     environment:
       - MXL_DOMAIN=/mxl-domain
     restart: unless-stopped
