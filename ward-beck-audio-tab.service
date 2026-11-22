@@ -1,0 +1,13 @@
+[Unit]
+Description=Ward-Beck Audio Tab - Virtual Audio Patchbay & VU Bridge Daemon
+After=pipewire.service pulseaudio.service
+BindsTo=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/ward-beck-audio-tab
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

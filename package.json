@@ -1,0 +1,25 @@
+{
+  "name": "ward-beck-audio-tab",
+  "version": "1.0.0",
+  "description": "Ward-Beck Audio Tab — Virtual Audio Patchbay & Test Point Controller Daemon for Linux",
+  "main": "ward-beck-audio-tab.py",
+  "scripts": {
+    "start": "python3 ward-beck-audio-tab.py",
+    "check": "python3 ward-beck-audio-tab.py --check",
+    "stop": "python3 ward-beck-audio-tab.py --abandon",
+    "install": "./install.sh",
+    "uninstall": "./uninstall.sh"
+  },
+  "keywords": [
+    "ward-beck",
+    "audio-tab",
+    "pipewire",
+    "pulseaudio",
+    "audio-loopback",
+    "vu-meter",
+    "broadcast",
+    "xtm-4"
+  ],
+  "author": "Ward-Beck Systems",
+  "license": "UNLICENSED"
+}
