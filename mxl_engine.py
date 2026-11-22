@@ -135,8 +135,13 @@ class MxlFlow:
         # 3. Initialize ring.data (channel_count * buffer_length * 4 bytes)
         if not os.path.exists(self.data_path) or os.path.getsize(self.data_path) != self.data_size:
             with open(self.data_path, "wb") as f:
-                # Pre-allocate zeroed storage
+                # Pre-allocate non-sparse storage to prevent SIGBUS in tmpfs mmap
                 f.truncate(self.data_size)
+                try:
+                    os.posix_fallocate(f.fileno(), 0, self.data_size)
+                except Exception:
+                    f.seek(self.data_size - 1)
+                    f.write(b"\x00")
 
         # Open writer memory maps
         f_hdr = open(self.header_path, "r+b")
