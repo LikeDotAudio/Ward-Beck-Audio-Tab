@@ -145,11 +145,27 @@ class MxlFlow:
         f_r_data = open(self.data_path, "rb")
         self._reader_mm = mmap.mmap(f_r_data.fileno(), self.data_size, access=mmap.ACCESS_READ)
 
+    def ensure_open(self):
+        """Ensures all reader and writer memory-maps are active and valid."""
+        with self._lock:
+            if (
+                self._writer_mm is None
+                or getattr(self._writer_mm, "closed", True)
+                or self._writer_header_mm is None
+                or getattr(self._writer_header_mm, "closed", True)
+                or self._reader_mm is None
+                or getattr(self._reader_mm, "closed", True)
+                or self._reader_header_mm is None
+                or getattr(self._reader_header_mm, "closed", True)
+            ):
+                self._init_files()
+
     def write_frames(self, ch0_floats: list, ch1_floats: list):
         """
         Writes de-interleaved Float32 samples into the continuous circular ring buffer.
         Performs lock-free advancing of the write head and updates TAI epoch timestamp.
         """
+        self.ensure_open()
         n_frames = min(len(ch0_floats), len(ch1_floats))
         if n_frames == 0:
             return
@@ -197,6 +213,7 @@ class MxlFlow:
 
     def read_header(self) -> dict:
         """Reads current ring state using PROT_READ read isolation."""
+        self.ensure_open()
         data = self._reader_header_mm[:HEADER_SIZE]
         magic, ver, w_head, res1, w_seq, tai_ts, ovr, und, qtm, srate, ch_cnt, blen, _ = struct.unpack(
             HEADER_STRUCT_FMT, data
@@ -339,6 +356,8 @@ class MxlEngine:
     def start(self, source_device: str = "wbs_meter_tap.monitor"):
         self.active_source = source_device
         self.shutdown_event.clear()
+        for f in self.flows.values():
+            f.ensure_open()
 
         # Start edge bridge thread (PipeWire/ALSA -> MXL Shm)
         self.bridge_thread = threading.Thread(target=self._edge_bridge_worker, daemon=True)
