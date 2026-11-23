@@ -113,6 +113,7 @@ fn main() {
 
     std::thread::spawn(tap::meter_reader_loop);
     std::thread::spawn(nmos::nmos_discovery_loop);
+    std::thread::spawn(tap::client_watchdog_loop);
 
     aoip::set_dante_ip_provider(Box::new(nmos::dante_ips));
     aoip::start(util::shutdown_flag());

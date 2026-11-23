@@ -1931,3 +1931,68 @@ mod tests {
         let _b = state_lock();
     }
 }
+
+// ---------------------------------------------------------------------------
+// Client watchdog: a tone or Bit Spitter left on by a page that was closed or
+// crashed stops by itself. Every browser request (it carries Sec-Fetch-Mode)
+// and every POST /api/heartbeat counts as a check-in. XTM polls every 4.5 s
+// and the TAP page every 4 s, so an open page always keeps the signal alive.
+// WBS_CLIENT_TIMEOUT=<seconds> changes the limit; 0 turns the watchdog off.
+// ---------------------------------------------------------------------------
+
+static LAST_CLIENT: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Record that a client is still there.
+pub fn client_checkin() {
+    if let Ok(mut g) = LAST_CLIENT.lock() {
+        *g = Some(Instant::now());
+    }
+}
+
+/// Seconds since the last check-in (None before the first one).
+pub fn client_idle_secs() -> Option<f64> {
+    LAST_CLIENT.lock().ok().and_then(|g| g.map(|t| t.elapsed().as_secs_f64()))
+}
+
+pub fn client_timeout_secs() -> f64 {
+    std::env::var("WBS_CLIENT_TIMEOUT").ok().and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(12.0)
+}
+
+/// True when a signal is on and no client has checked in within `limit`.
+pub fn watchdog_expired(signal_on: bool, idle: Option<f64>, limit: f64) -> bool {
+    signal_on && limit > 0.0 && idle.map_or(true, |s| s > limit)
+}
+
+pub fn client_watchdog_loop() {
+    while !is_shutting_down() {
+        thread::sleep(Duration::from_secs(1));
+        let limit = client_timeout_secs();
+        let (tone, bb) = (test_tone_active(), bitbuddy_active());
+        if !watchdog_expired(tone || bb, client_idle_secs(), limit) {
+            continue;
+        }
+        let _g = state_lock();
+        if test_tone_active() {
+            println!("[WARD BECK TAP] No client for {limit:.0} s: stopping the test tone");
+            stop_test_tone();
+        }
+        if bitbuddy_active() {
+            println!("[WARD BECK TAP] No client for {limit:.0} s: stopping the Bit Spitter");
+            stop_bit_buddy();
+        }
+    }
+}
+
+#[cfg(test)]
+mod watchdog_tests {
+    use super::watchdog_expired;
+
+    #[test]
+    fn expires_only_when_on_and_idle() {
+        assert!(!watchdog_expired(false, Some(100.0), 12.0));
+        assert!(!watchdog_expired(true, Some(3.0), 12.0));
+        assert!(watchdog_expired(true, Some(12.5), 12.0));
+        assert!(watchdog_expired(true, None, 12.0));
+        assert!(!watchdog_expired(true, None, 0.0));
+    }
+}

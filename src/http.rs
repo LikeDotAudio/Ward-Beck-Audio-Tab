@@ -47,9 +47,11 @@ fn json_reply(v: &Value) -> Reply {
 
 type RouteResult = Result<Reply, String>;
 
-/// Bind 127.0.0.1:PORT.
+/// Bind WBS_BIND:PORT (default 127.0.0.1, loopback only). A container on a bridge
+/// network sets WBS_BIND=0.0.0.0 and publishes the port as 127.0.0.1:8467:8467.
 pub fn bind() -> Result<Server, String> {
-    Server::http(("127.0.0.1", port())).map_err(|e| e.to_string())
+    let host = std::env::var("WBS_BIND").ok().filter(|h| !h.trim().is_empty()).unwrap_or_else(|| "127.0.0.1".into());
+    Server::http((host.trim(), port())).map_err(|e| e.to_string())
 }
 
 /// Serve forever, one thread per request.
@@ -156,6 +158,9 @@ fn unsupported(method: &str) -> Reply {
 fn handle(mut rq: Request) {
     let (path, query) = split_target(rq.url());
     let method = rq.method().clone();
+    if path == "/api/heartbeat" || rq.headers().iter().any(|h| h.field.equiv("Sec-Fetch-Mode")) {
+        tap::client_checkin();
+    }
     let result = match method {
         Method::Options => Ok(Reply::Empty(204)),
         Method::Get => {
@@ -487,6 +492,7 @@ fn do_post(path: &str, body: &str) -> RouteResult {
             tap::toggle_route(&route);
             Reply::Empty(200)
         }
+        "/api/heartbeat" => json_reply(&json!({"idle_limit_s": tap::client_timeout_secs()})),
         "/api/toggle_test_tone" | "/api/test_tone" => {
             let data = loads_obj(body)?;
             let freq = data.get("freq").cloned().unwrap_or(json!(1000));
