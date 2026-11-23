@@ -505,94 +505,9 @@ pub fn test_signals_catalog() -> &'static [TestSignalFlow] {
     CAT.get_or_init(|| test_signals_catalog_for(wbs_host_ip()))
 }
 
-/// Small PRNG standing in for Python's random.random() (pink noise only).
-struct SplitMix(u64);
-
-impl SplitMix {
-    fn seeded() -> Self {
-        let t = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0x1234_5678);
-        SplitMix(t ^ ((std::process::id() as u64) << 32))
-    }
-    fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-    fn random(&mut self) -> f64 {
-        (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
-    }
-}
-
-/// Synthesizes IEEE 754 Float32 *interleaved* stereo samples for broadcast test signals
-/// (exactly what the Python writes to each Test Signals `channels` file).
-pub fn synthesize_test_signal_buffer(signal_type: &str, num_frames: usize, sample_rate: u32) -> Vec<u8> {
-    let sr = sample_rate as f64;
-    let mut out: Vec<u8> = Vec::with_capacity(num_frames * 8);
-    let mut push = |v: f64| {
-        let b = (v as f32).to_le_bytes();
-        out.extend_from_slice(&b);
-        out.extend_from_slice(&b);
-    };
-    let sine = |freq: f64, push: &mut dyn FnMut(f64)| {
-        let amp = 0.1;
-        let phase_inc = 2.0 * std::f64::consts::PI * freq / sr;
-        for i in 0..num_frames {
-            push(amp * (phase_inc * i as f64).sin());
-        }
-    };
-    match signal_type {
-        "sine_1000" => sine(1000.0, &mut push),
-        "sine_400" => sine(400.0, &mut push),
-        "sine_100" => sine(100.0, &mut push),
-        "silence" => return vec![0u8; num_frames * 2 * 4],
-        "pink_noise" => {
-            let mut rng = SplitMix::seeded();
-            let amp = 0.08;
-            let (mut b0, mut b1, mut b2, mut b3, mut b4, mut b5, mut b6) = (0.0f64, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-            for _ in 0..num_frames {
-                let white = rng.random() * 2.0 - 1.0;
-                b0 = 0.99886 * b0 + white * 0.0555179;
-                b1 = 0.99332 * b1 + white * 0.0750759;
-                b2 = 0.96900 * b2 + white * 0.1538520;
-                b3 = 0.86650 * b3 + white * 0.3104856;
-                b4 = 0.55000 * b4 + white * 0.5329522;
-                b5 = -0.7616 * b5 - white * 0.0168980;
-                let pink = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11 * amp;
-                b6 = white * 0.115926;
-                push(pink);
-            }
-        }
-        "sweep" => {
-            let f_start = 20.0f64;
-            let f_end = 20000.0f64;
-            let duration = num_frames as f64 / sr;
-            let amp = 0.1;
-            let log_ratio = (f_end / f_start).ln();
-            for i in 0..num_frames {
-                let t = i as f64 / sr;
-                let phase = 2.0 * std::f64::consts::PI * f_start * ((f_end / f_start).powf(t / duration) - 1.0)
-                    / (log_ratio / duration);
-                push(amp * phase.sin());
-            }
-        }
-        "bitbuddy" => {
-            let amp = 0.1;
-            let mut lfsr: u32 = 0x7ACE;
-            for _ in 0..num_frames {
-                let bit = (lfsr ^ (lfsr >> 1)) & 1;
-                lfsr = (lfsr >> 1) | (bit << 14);
-                push(if bit != 0 { amp } else { -amp });
-            }
-        }
-        _ => sine(1000.0, &mut push),
-    }
-    out
-}
+/// Test Signals grains (sine, pink noise, sweep, PRBS-15, silence) come from the
+/// Ward-Beck Generators crate (Generators/ submodule).
+pub use wbs_generators::synthesize_test_signal_buffer;
 
 // ---------------------------------------------------------------------------
 // MxlFlow
@@ -1276,54 +1191,37 @@ impl Inner {
         }
     }
 
-    /// Continuously synthesizes calibrated 1 kHz 0 VU (-18 dBFS) tone into the tone flow.
+    /// Continuously synthesizes calibrated 1 kHz 0 VU (-18 dBFS) tone into the tone flow
+    /// (POD-33 tone from the Ward-Beck Generators crate).
     fn tone_worker(self: Arc<Self>) {
         const QUANTUM: usize = 256;
         let sample_rate = 48000.0f64;
-        let amp = 10f64.powf(-18.0 / 20.0);
-        let two_pi = 2.0 * std::f64::consts::PI;
-        let phase_inc = two_pi * 1000.0 / sample_rate;
+        let mut tone = wbs_generators::Tone::new(1000.0, -18.0, sample_rate);
         let interval = QUANTUM as f64 / sample_rate;
-        let mut phase = 0.0f64;
         let start = Instant::now();
         let mut k = 0u64;
         let mut ch = vec![0.0f64; QUANTUM];
         while self.running() && self.tone_enabled.load(Ordering::Acquire) {
-            for s in ch.iter_mut() {
-                *s = amp * phase.sin();
-                phase += phase_inc;
-                if phase > two_pi {
-                    phase -= two_pi;
-                }
-            }
+            tone.fill(&mut ch);
             self.tone().write_frames(&ch, &ch);
             k += 1;
             sleep_until(start, k, interval);
         }
     }
 
-    /// ABP-1 walking-1s: one bit per second, 1 kHz bipolar square at that bit's weight
-    /// (-6, -12 ... -60 dBFS), steps locked to ring position.
+    /// ABP-1 walking 1s (Ward-Beck Generators crate): one bit per second, 1 kHz bipolar
+    /// square at that bit's weight (-6, -12 ... -60 dBFS), steps locked to ring position.
     fn bit_spitter_worker(self: Arc<Self>) {
         const QUANTUM: usize = 256;
         let sample_rate = 48000usize;
-        let half_period = sample_rate / 2000;
-        let bits = 10usize;
+        let mut walk = wbs_generators::WalkingOnes::new(sample_rate, 10);
         let interval = QUANTUM as f64 / sample_rate as f64;
-        let mut sample_idx = 0usize;
         let start = Instant::now();
         let mut k = 0u64;
         let mut ch = vec![0.0f64; QUANTUM];
         let flow = self.bit_spitter().clone();
         while self.running() && self.bit_enabled.load(Ordering::Acquire) {
-            let head = flow.write_head();
-            let buf_len = flow.buffer_length;
-            for (i, s) in ch.iter_mut().enumerate() {
-                let step = (((head + i) % buf_len) / sample_rate) % bits;
-                let amp = 2f64.powi(-(step as i32 + 1));
-                *s = if ((sample_idx + i) / half_period) % 2 == 0 { amp } else { -amp };
-            }
-            sample_idx += QUANTUM;
+            walk.fill(&mut ch, flow.write_head(), flow.buffer_length);
             flow.write_frames(&ch, &ch);
             k += 1;
             sleep_until(start, k, interval);

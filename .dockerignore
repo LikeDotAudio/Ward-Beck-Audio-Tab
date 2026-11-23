@@ -4,3 +4,5 @@ mxl-hands-on
 __pycache__
 *.py
 *.pyc
+Generators/rust/target
+Generators/node_modules

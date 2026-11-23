@@ -42,8 +42,9 @@ It allows Linux users to route desktop audio, YouTube, Spotify, DAWs, and media 
 ## 🚀 Quick Start
 
 ### Option A: Direct Run
-One native binary, written in Rust. `run.sh` builds it on first use (needs [cargo](https://rustup.rs)):
+One native binary, written in Rust. `run.sh` builds it on first use (needs [cargo](https://rustup.rs)). The generators come from the [Ward-Beck Generators](https://github.com/LikeDotAudio/Ward-Beck-Generators) submodule, so clone with `--recursive` (run.sh fetches it if you forgot):
 ```bash
+git clone --recursive https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap.git && cd Ward-Beck-Audio-Tap
 ./run.sh                 # = cargo build --release && target/release/ward-beck-audio-tab
 ./run.sh --no-browser    # headless; also --check (self-test) and --abandon (teardown)
 ```

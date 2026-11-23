@@ -1,3 +1,6 @@
 [submodule "mxl-hands-on"]
 	path = mxl-hands-on
 	url = https://github.com/cbcrc/mxl-hands-on
+[submodule "Generators"]
+	path = Generators
+	url = https://github.com/LikeDotAudio/Ward-Beck-Generators.git

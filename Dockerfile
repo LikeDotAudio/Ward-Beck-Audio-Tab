@@ -12,6 +12,7 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock LICENSE ./
 COPY src ./src
 COPY web ./web
+COPY Generators/rust ./Generators/rust
 RUN cargo build --release --locked
 
 # ---- runtime ----

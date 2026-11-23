@@ -452,7 +452,12 @@ dependencies = [
  "socket2",
  "tiny_http",
  "ureq",
+ "wbs-generators",
 ]
+
+[[package]]
+name = "wbs-generators"
+version = "1.0.0"
 
 [[package]]
 name = "windows-link"

@@ -5,6 +5,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN="$HERE/target/release/ward-beck-audio-tab"
 if [ ! -x "$BIN" ] || [ -n "$(find "$HERE/src" "$HERE/web" "$HERE/Cargo.toml" -newer "$BIN" -print -quit)" ]; then
+    [ -f "$HERE/Generators/rust/Cargo.toml" ] || git -C "$HERE" submodule update --init Generators   # Ward-Beck Generators crate
     cargo build --release --manifest-path "$HERE/Cargo.toml"
 fi
 exec "$BIN" "$@"

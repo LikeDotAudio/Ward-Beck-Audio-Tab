@@ -14,6 +14,7 @@ echo "===================================================================="
 
 # 1. Build and install the executable (Rust; needs cargo: https://rustup.rs)
 command -v cargo >/dev/null || { echo "✘ cargo not found. Install Rust first: https://rustup.rs"; exit 1; }
+[ -f "$HERE/Generators/rust/Cargo.toml" ] || git -C "$HERE" submodule update --init Generators
 cargo build --release --manifest-path "$HERE/Cargo.toml"
 mkdir -p "$BIN_DIR"
 systemctl --user stop ward-beck-audio-tab.service 2>/dev/null || true
