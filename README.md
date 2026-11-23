@@ -46,7 +46,7 @@ No installation or pip dependencies required (uses standard Python 3 library):
 ```bash
 python3 ward-beck-audio-tab.py
 ```
-Then open your web browser to **http://127.0.0.1:8467** to access the hardware-styled rack router.
+Then open your web browser to **https://ward-beck.ca** (or [xtm.wbsps.ca](https://xtm.wbsps.ca)) to view the live broadcast visualizer, or **http://127.0.0.1:8467** to inspect the local telemetry dashboard.
 
 In **XTM-4** ([xtm.wbsps.ca](https://xtm.wbsps.ca)), open the Settings Drawer (top-left gear) and select:
 > `🎛️ [WBS Router Active] Monitor of WBS Meter Tap`
@@ -75,7 +75,7 @@ The daemon provides a CORS-enabled HTTP server on port `8467`:
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/` | `GET` | Web patchbay rack interface with animated VU meters |
+| `/` | `GET` | Local telemetry dashboard & gateway to live visualizer (`ward-beck.ca`) |
 | `/api/status` | `GET` | JSON status, telemetry, meter dBFS/VU levels, and routes |
 | `/api/set_source` | `POST` | Switch active patch input source (`{"source": "name"}`) |
 | `/api/toggle` | `POST` | Toggle route legs (`{"route": "meter_tap \| insert_stage \| speaker_split \| test_point_split"}`) |

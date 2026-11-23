@@ -1,0 +1,51 @@
+# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+# WARD BECK TAP as a container.
+#
+#   export UID GID=$(id -g)        # run as your desktop user (owns the audio server)
+#   docker compose up -d --build   # build + start; dashboard: http://127.0.0.1:8467
+#   docker compose logs -f tap
+#
+# Add the CBC / Radio-Canada MXL test set alongside it:
+#   ./start-mxl-demo.sh            # or: docker compose -f docker-compose.mxl-demo.yml up -d
+#
+# Full instructions are served by the TAP itself at http://127.0.0.1:8467/setup
+
+name: wbs-tap
+
+services:
+  tap:
+    build: .
+    image: ward-beck-audio-tab:latest
+    container_name: wbs-tap
+    restart: unless-stopped
+    # Multicast (SAP 239.255.255.255:9875, SIP 224.0.1.75:5060), MQTT on 127.0.0.1:1883
+    # and the dashboard bound to 127.0.0.1:8467 all need the host's network.
+    network_mode: host
+    # Same user as the desktop session so pactl / pw-dump may use its sockets.
+    user: "${UID:-1000}:${GID:-1000}"
+    group_add:
+      - audio
+    environment:
+      XDG_RUNTIME_DIR: /run/user/${UID:-1000}
+      PULSE_SERVER: unix:/run/user/${UID:-1000}/pulse/native
+      PIPEWIRE_RUNTIME_DIR: /run/user/${UID:-1000}
+      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/run/dbus/system_bus_socket
+      # Passive PTP source (apk-ptp discovery over MQTT). AOIP_PTP_MODE=sockets binds 319/320 instead.
+      MQTT_HOST: 127.0.0.1
+      MQTT_PORT: "1883"
+      AOIP_PTP_MODE: mqtt
+      # AOIP_IFACE: 44.44.44.10   # optional: join SAP/SIP on one interface only
+    volumes:
+      # PipeWire + PulseAudio sockets of the logged-in user
+      - /run/user/${UID:-1000}/pulse:/run/user/${UID:-1000}/pulse
+      - /run/user/${UID:-1000}/pipewire-0:/run/user/${UID:-1000}/pipewire-0
+      # EBU DMF / MXL shared-memory domains (shared with the CBC test set)
+      - /dev/shm/mxl:/dev/shm/mxl
+      # Avahi (Dante / RAVENNA / NMOS mDNS discovery) via the system D-Bus
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+    devices:
+      - /dev/snd:/dev/snd
+    # Docker's default AppArmor profile blocks D-Bus, which Avahi needs
+    # ("Failed to create client object: Access denied").
+    security_opt:
+      - apparmor:unconfined
