@@ -1,10 +1,10 @@
-# Ward-Beck Audio Tab
+# Ward-Beck Audio Tap
 
 [![License](https://img.shields.io/badge/License-Ward--Beck%20Systems-1a3b5c.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20(PipeWire%20%2F%20PulseAudio)-38bdf8.svg)](#requirements)
 [![Rust](https://img.shields.io/badge/Rust-1.80+-f97316.svg)](#requirements)
 
-**Ward-Beck Audio Tab** is a low-latency virtual audio patchbay, test point inserter, and live VU meter bridge daemon engineered for the **Ward-Beck Systems XTM-4 & POD-22 Broadcast Metering Ecosystem**.
+**Ward-Beck Audio Tap** is a low-latency virtual audio patchbay, test point inserter, and live VU meter bridge daemon engineered for the **Ward-Beck Systems XTM-4 & POD-22 Broadcast Metering Ecosystem**.
 
 It allows Linux users to route desktop audio, YouTube, Spotify, DAWs, and media players directly into browser-based broadcast visualizers (such as [xtm.wbsps.ca](https://xtm.wbsps.ca)) with **zero microphone feedback risk**, **zero browser screen-sharing banners**, and sub-millisecond meter synchronization.
 
@@ -76,7 +76,7 @@ served by the TAP at **http://127.0.0.1:8467/setup**.
 
 Bare loopback commands can accidentally link live physical microphones directly into physical speakers, causing immediate acoustic feedback howling. 
 
-**Ward-Beck Audio Tab** includes kernel-level safety logic:
+**Ward-Beck Audio Tap** includes kernel-level safety logic:
 - Physical microphone sources are visually flagged with `🎤 [Mic/Input]`.
 - If a microphone source is selected, it is metered on the VU taps but **automatically blocked from directly routing to physical room speakers**, preventing loud feedback while keeping metering intact.
 
