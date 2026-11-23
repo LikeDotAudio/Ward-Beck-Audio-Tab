@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WARD BECK TAP // Local Telemetry Daemon</title>
+<style>
+  :root {
+    --bg-dark: #070d14;
+    --panel-bg: #0b1724;
+    --panel-border: #18334d;
+    --text-primary: #e2e8f0;
+    --text-muted: #64748b;
+    --accent-orange: #ea580c;
+    --accent-green: #22c55e;
+    --accent-cyan: #38bdf8;
+    --card-bg: #0d1e2e;
+    --card-border: #1e3a5f;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background-color: var(--bg-dark);
+    color: var(--text-primary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+  }
+  .telemetry-chassis {
+    width: 100%;
+    max-width: 860px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.06);
+    overflow: hidden;
+  }
+  .header-bar {
+    background: linear-gradient(180deg, #102235 0%, #0c1a29 100%);
+    border-bottom: 1px solid var(--panel-border);
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .branding { display: flex; align-items: center; gap: 10px; }
+  .branding-badge {
+    background: #064e3b;
+    color: #6ee7b7;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid #059669;
+    letter-spacing: 0.5px;
+  }
+  .branding-title { font-size: 14px; font-weight: 700; color: #fff; letter-spacing: 0.5px; }
+  .branding-sub { font-size: 11px; color: var(--text-muted); }
+  .live-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #052e16;
+    color: #4ade80;
+    border: 1px solid #166534;
+    padding: 4px 10px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .live-pill-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: #22c55e;
+    box-shadow: 0 0 8px #22c55e;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .body-content { padding: 24px 20px; display: flex; flex-direction: column; gap: 20px; }
+  .action-banner {
+    background: linear-gradient(135deg, #14283d 0%, #0d1e2e 100%);
+    border: 1px solid #25507d;
+    border-radius: 6px;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .action-banner-title { font-size: 13px; font-weight: 700; color: #93c5fd; text-transform: uppercase; letter-spacing: 0.5px; }
+  .action-banner-desc { font-size: 12px; color: #cbd5e1; line-height: 1.5; }
+  .action-buttons { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+  .btn-primary {
+    background: #ea580c;
+    color: #fff;
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 10px 18px;
+    border-radius: 4px;
+    border: 1px solid #f97316;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.15s ease;
+  }
+  .btn-primary:hover { background: #f97316; box-shadow: 0 0 14px rgba(249,115,22,0.4); }
+  .btn-reset {
+    background: #7f1d1d; color: #fff; font: inherit; font-size: 12px; font-weight: 700;
+    padding: 10px 18px; border-radius: 4px; border: 1px solid #ef4444; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 8px; margin-left: auto;
+  }
+  .btn-reset:hover { background: #b91c1c; box-shadow: 0 0 14px rgba(239,68,68,0.4); }
+  .btn-reset:disabled { opacity: 0.6; cursor: wait; }
+  .reset-report { font-size: 11px; line-height: 1.6; color: #fca5a5; font-family: monospace; white-space: pre-wrap; word-break: break-all; }
+  .btn-secondary {
+    background: #1e293b;
+    color: #38bdf8;
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 10px 18px;
+    border-radius: 4px;
+    border: 1px solid #334155;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.15s ease;
+  }
+  .btn-secondary:hover { background: #334155; color: #7dd3fc; }
+  .telemetry-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px;
+  }
+  .stat-card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
+  .stat-value { font-size: 16px; font-weight: 700; color: #fff; }
+  .meter-bar-container { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+  .meter-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+  .meter-track { flex: 1; height: 10px; background: #060e17; border-radius: 2px; overflow: hidden; border: 1px solid #1e3a5f; }
+  .meter-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #22c55e 0%, #eab308 75%, #ef4444 95%); transition: width 0.08s ease-out; }
+  .meter-readout { width: 62px; text-align: right; color: #38bdf8; font-weight: 700; }
+  .endpoints-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .endpoints-table th {
+    text-align: left;
+    padding: 8px 12px;
+    background: #091624;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--card-border);
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+  }
+  .endpoints-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    color: #cbd5e1;
+  }
+  .endpoints-table tr:last-child td { border-bottom: none; }
+  .method-badge {
+    background: #0284c7;
+    color: #fff;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 700;
+  }
+  .endpoint-link { color: #38bdf8; text-decoration: none; }
+  .endpoint-link:hover { text-decoration: underline; }
+  .footer-bar {
+    border-top: 1px solid var(--panel-border);
+    padding: 12px 20px;
+    font-size: 11px;
+    color: var(--text-muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    background: #09131d;
+  }
+  .footer-links a { color: var(--text-muted); text-decoration: none; margin-left: 12px; }
+  .footer-links a:hover { color: #94a3b8; }
+
+  /* Listen picker: the simple front page */
+  .pick { display:flex; flex-direction:column; gap:14px; }
+  .pick-now { display:flex; align-items:center; gap:12px; }
+  .pick-now-label { font-size:15px; font-weight:700; color:#e2e8f0; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pick-now-bar { width:160px; height:8px; background:#0f172a; border-radius:4px; overflow:hidden; }
+  .pick-now-fill { height:100%; width:0; background:linear-gradient(90deg,#22c55e,#eab308 80%,#ef4444); transition:width 60ms linear; }
+  .pick-group-title { font-size:11px; font-weight:700; letter-spacing:1px; text-transform:uppercase; color:#64748b; margin-bottom:6px; }
+  .pick-list { display:flex; flex-direction:column; gap:6px; }
+  .pick-row { display:flex; align-items:center; gap:10px; width:100%; text-align:left; padding:10px 12px; border-radius:8px; border:1px solid #1e293b; background:#0b1220; color:#cbd5e1; font:inherit; cursor:pointer; }
+  .pick-row:hover { border-color:#38bdf8; }
+  .pick-row.on { border-color:#22c55e; background:#052e16; color:#f8fafc; }
+  .pick-led { width:9px; height:9px; border-radius:50%; background:#334155; flex:none; }
+  .pick-row.on .pick-led { background:#22c55e; box-shadow:0 0 8px #22c55e; }
+  .pick-name { font-weight:700; flex:none; }
+  .pick-title { color:#94a3b8; font-size:12px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pick-lvl { width:60px; height:5px; background:#0f172a; border-radius:3px; overflow:hidden; flex:none; }
+  .pick-lvl > div { height:100%; width:0; background:#22c55e; }
+  .pick-empty { font-size:12px; color:#64748b; padding:4px 2px; }
+  /* CTRL tray: hold CTRL 5 s to reveal the full routing (same gesture as XTM's settings drawer) */
+  .ctrl-lock { display:flex; align-items:center; gap:10px; padding:8px 12px; border:1px dashed #1e293b; border-radius:8px; color:#475569; font-size:11px; }
+  .ctrl-lock-bar { flex:1; max-width:160px; height:4px; background:#0f172a; border-radius:2px; overflow:hidden; }
+  .ctrl-lock-fill { height:100%; width:0; background:#22c55e; }
+  .tray { display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px; padding:10px 12px; border:1px solid #1e293b; border-radius:8px; font-size:12px; color:#64748b; }
+  .tray-facts { display:flex; flex-wrap:wrap; gap:6px 18px; flex:1; min-width:0; }
+  .tray-facts b { color:#cbd5e1; font-weight:600; word-break:break-all; }
+  .tray-actions { display:flex; align-items:center; gap:14px; }
+  .tray-actions a { color:#38bdf8; text-decoration:none; font-weight:700; }
+  .tray .reset-report { flex-basis:100%; }
+  .ctrl-lock.holding { color:#22c55e; border-color:#22c55e; }
+</style>
+</head>
+<body>
+<div class="telemetry-chassis">
+  <div class="header-bar">
+    <div class="branding">
+      <span class="branding-badge">WBS DAEMON</span>
+      <div>
+        <div class="branding-title">WARD-BECK SYSTEMS // TELEMETRY &amp; SIGNAL TAP</div>
+        <div class="branding-sub">Linux Virtual Patchbay &amp; MXL Ring Buffer Telemetry (:8467)</div>
+        <div class="branding-sub"><a href="/setup" style="color:#38bdf8;font-weight:700;text-decoration:none;">⚙ Setup &amp; Docker deployment guide →</a></div>
+      </div>
+    </div>
+    <div class="live-pill" id="sseStatusPill">
+      <span class="live-pill-dot" id="sseDot"></span>
+      <span id="sseStatusText">STREAMING TELEMETRY</span>
+    </div>
+  </div>
+
+  <div class="body-content">
+    <div class="pick">
+      <div class="pick-now">
+        <div class="pick-now-label">What should the meters hear?</div>
+        <div class="pick-now-bar"><div class="pick-now-fill" id="pickFill"></div></div>
+      </div>
+      <div>
+        <div class="pick-group-title">Windows making noise</div>
+        <div class="pick-list" id="pickApps"></div>
+      </div>
+      <div>
+        <div class="pick-group-title">Sound card inputs</div>
+        <div class="pick-list" id="pickInputs"></div>
+      </div>
+      <div class="ctrl-lock" id="ctrlLock" title="Hold CTRL for 5 seconds">
+        <span>🔒</span><span id="ctrlLockText">Available to those that know...</span>
+        <div class="ctrl-lock-bar"><div class="ctrl-lock-fill" id="ctrlLockFill"></div></div>
+      </div>
+    </div>
+
+    <div id="ctrlTray" style="display:none;">
+      <div class="tray">
+        <div class="tray-facts">
+          <span>Speakers <b id="valPhysicalSink">—</b></span>
+          <span>Network <b id="valAoipCount">—</b></span>
+        </div>
+        <div class="tray-actions">
+          <a href="http://localhost:8080" target="_blank" rel="noopener" id="btnLocalHostLink" style="display:none;">Local XTM :8080</a>
+          <a href="/api/status" target="_blank">API</a>
+          <button type="button" class="btn-reset" id="btnResetAll" title="Kill every generator and destroy stray virtual cards">⟲ Reset All</button>
+        </div>
+        <div class="reset-report" id="resetReport" hidden></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-bar">
+    <div>Copyright &copy; 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.</div>
+    <div class="footer-links">
+      <a href="https://ward-beck.ca" target="_blank" rel="noopener">Ward-Beck.ca</a>
+      <a href="https://xtm.wbsps.ca" target="_blank" rel="noopener">XTM.WBSps.ca</a>
+      <a href="https://wbsps.ca" target="_blank" rel="noopener">WBSps.ca</a>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const fillL = document.getElementById('meterFillL');
+  const fillR = document.getElementById('meterFillR');
+  const textL = document.getElementById('meterTextL');
+  const textR = document.getElementById('meterTextR');
+  const srcEl = document.getElementById('valActiveSource');
+  const sinkEl = document.getElementById('valPhysicalSink');
+  const aoipEl = document.getElementById('valAoipCount');
+  const pill = document.getElementById('sseStatusPill');
+  const dot = document.getElementById('sseDot');
+  const pillText = document.getElementById('sseStatusText');
+
+  function dbToFrac(db) {
+    if (db <= -60) return 0;
+    if (db >= 0) return 100;
+    return Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
+  }
+
+  // Probe local server :8080
+  fetch('http://localhost:8080/manifest.json', { mode: 'no-cors' }).then(() => {
+    const loc = document.getElementById('btnLocalHostLink');
+    if (loc) loc.style.display = 'inline';
+  }).catch(() => {});
+
+  // 1. Connect to SSE stream
+  try {
+    const es = new EventSource('/api/stream/meters');
+    es.onmessage = (e) => {
+      try {
+        const d = JSON.parse(e.data);
+        const lDb = typeof d.left_db === 'number' ? d.left_db : -60;
+        const rDb = typeof d.right_db === 'number' ? d.right_db : -60;
+        if (fillL) fillL.style.width = dbToFrac(lDb) + '%';
+        if (fillR) fillR.style.width = dbToFrac(rDb) + '%';
+        if (textL) textL.textContent = lDb.toFixed(1) + ' dB';
+        if (textR) textR.textContent = rDb.toFixed(1) + ' dB';
+        const pf = document.getElementById('pickFill');
+        if (pf) pf.style.width = dbToFrac(Math.max(lDb, rDb)) + '%';
+      } catch (_) {}
+    };
+    es.onerror = () => {
+      if (dot) dot.style.background = '#eab308';
+      if (pillText) pillText.textContent = 'RECONNECTING TELEMETRY';
+    };
+    es.onopen = () => {
+      if (dot) dot.style.background = '#22c55e';
+      if (pillText) pillText.textContent = 'STREAMING TELEMETRY';
+    };
+  } catch (err) {
+    if (pillText) pillText.textContent = 'OFFLINE';
+  }
+
+  // Listen picker: windows making noise, then sound card inputs
+  const appsEl = document.getElementById('pickApps');
+  const inputsEl = document.getElementById('pickInputs');
+  function row(on, name, title, lvl, onClick) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pick-row' + (on ? ' on' : '');
+    b.innerHTML = '<span class="pick-led"></span><span class="pick-name"></span><span class="pick-title"></span>';
+    b.querySelector('.pick-name').textContent = name;
+    b.querySelector('.pick-title').textContent = title || '';
+    if (lvl !== null) {
+      const l = document.createElement('div');
+      l.className = 'pick-lvl';
+      l.innerHTML = '<div style="width:' + dbToFrac(lvl) + '%"></div>';
+      b.appendChild(l);
+    }
+    b.addEventListener('click', onClick);
+    return b;
+  }
+  function listen(body) {
+    fetch('/api/listen', { method: 'POST', body: JSON.stringify(body) }).then(refreshPick).catch(() => {});
+  }
+  function refreshPick() {
+    return fetch('/api/listen').then(r => r.json()).then(d => {
+      const pick = d.pick || {};
+      appsEl.replaceChildren();
+      inputsEl.replaceChildren();
+      const all = !pick.app && !pick.input;
+      appsEl.appendChild(row(all, 'Everything', 'all desktop audio', null, () => listen({ app: null })));
+      (d.apps || []).forEach(a => appsEl.appendChild(
+        row(pick.app === a.key, a.name, a.title, null, () => listen({ app: a.key }))));
+      if (!(d.inputs || []).length) {
+        const e = document.createElement('div');
+        e.className = 'pick-empty';
+        e.textContent = 'No sound card inputs found';
+        inputsEl.appendChild(e);
+      }
+      (d.inputs || []).forEach(i => inputsEl.appendChild(
+        row(pick.input === i.name, i.label, '', i.db, () => listen({ input: i.name }))));
+    }).catch(() => {});
+  }
+  refreshPick();
+  setInterval(refreshPick, 1500);
+
+  // CTRL tray: hold CTRL for 5 s to reveal the full routing for this session
+  const tray = document.getElementById('ctrlTray');
+  const lock = document.getElementById('ctrlLock');
+  const lockFill = document.getElementById('ctrlLockFill');
+  const lockText = document.getElementById('ctrlLockText');
+  let trayOpen = false;
+  function openTray() { trayOpen = true; tray.style.display = 'contents'; lock.style.display = 'none'; }
+  try { if (sessionStorage.getItem('wbs_tap_unlocked') === 'true') openTray(); } catch (_) {}
+  let held = null, holdTimer = null;
+  function cancelHold() {
+    clearInterval(holdTimer); holdTimer = null; held = null;
+    lock.classList.remove('holding'); lockFill.style.width = '0%';
+    lockText.textContent = 'Available to those that know...';
+  }
+  window.addEventListener('keydown', e => {
+    if (e.key !== 'Control' || held || trayOpen) return;
+    held = performance.now();
+    lock.classList.add('holding');
+    holdTimer = setInterval(() => {
+      const t = performance.now() - held;
+      lockFill.style.width = Math.min(100, t / 50) + '%';
+      lockText.textContent = Math.max(0, (5000 - t) / 1000).toFixed(1) + 's';
+      if (t >= 5000) {
+        cancelHold();
+        try { sessionStorage.setItem('wbs_tap_unlocked', 'true'); } catch (_) {}
+        openTray();
+      }
+    }, 40);
+  });
+  window.addEventListener('keyup', e => { if (e.key === 'Control' && held) cancelHold(); });
+  window.addEventListener('blur', () => { if (held) cancelHold(); });
+
+  // Reset All: kill generators + destroy stray cards
+  const resetBtn = document.getElementById('btnResetAll');
+  const resetOut = document.getElementById('resetReport');
+  if (resetBtn) resetBtn.addEventListener('click', () => {
+    resetBtn.disabled = true;
+    fetch('/api/reset_all', { method: 'POST' }).then(r => r.json()).then(rep => {
+      const lines = [];
+      lines.push('Generators killed: ' + (rep.generators.length ? rep.generators.join(', ') : 'none running'));
+      lines.push('Stray cards destroyed: ' + (rep.modules.length + rep.processes.length || 'none found'));
+      rep.modules.concat(rep.processes).forEach(m => lines.push('  ✕ ' + m));
+      resetOut.textContent = lines.join('\n');
+      resetOut.hidden = false;
+      refreshStatus();
+    }).catch(err => {
+      resetOut.textContent = 'Reset failed: ' + err;
+      resetOut.hidden = false;
+    }).finally(() => { resetBtn.disabled = false; });
+  });
+
+  // 2. Poll /api/status for pipeline & AoIP metadata
+  function refreshStatus() {
+    fetch('/api/status').then(r => r.json()).then(data => {
+      if (srcEl && data.selected_source) srcEl.textContent = data.selected_source;
+      if (sinkEl && data.physical_sink) sinkEl.textContent = data.physical_sink;
+      if (aoipEl && data.aoip) {
+        const danteCount = data.aoip.dante ? data.aoip.dante.device_count || 0 : 0;
+        const nmosCount = data.nmos ? data.nmos.count || 0 : 0;
+        aoipEl.textContent = `${danteCount} Dante · ${nmosCount} NMOS Nodes`;
+      }
+    }).catch(() => {});
+  }
+  refreshStatus();
+  setInterval(refreshStatus, 4000);
+})();
+</script>
+</body>
+</html>

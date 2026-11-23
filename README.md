@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/License-Ward--Beck%20Systems-1a3b5c.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20(PipeWire%20%2F%20PulseAudio)-38bdf8.svg)](#requirements)
-[![Python](https://img.shields.io/badge/Python-3.8+-22c55e.svg)](#requirements)
+[![Rust](https://img.shields.io/badge/Rust-1.80+-f97316.svg)](#requirements)
 
 **Ward-Beck Audio Tab** is a low-latency virtual audio patchbay, test point inserter, and live VU meter bridge daemon engineered for the **Ward-Beck Systems XTM-4 & POD-22 Broadcast Metering Ecosystem**.
 
@@ -42,9 +42,10 @@ It allows Linux users to route desktop audio, YouTube, Spotify, DAWs, and media 
 ## 🚀 Quick Start
 
 ### Option A: Direct Run
-No installation or pip dependencies required (uses standard Python 3 library):
+One native binary, written in Rust. `run.sh` builds it on first use (needs [cargo](https://rustup.rs)):
 ```bash
-python3 ward-beck-audio-tab.py
+./run.sh                 # = cargo build --release && target/release/ward-beck-audio-tab
+./run.sh --no-browser    # headless; also --check (self-test) and --abandon (teardown)
 ```
 Then open your web browser to **https://ward-beck.ca** (or [xtm.wbsps.ca](https://xtm.wbsps.ca)) to view the live broadcast visualizer, or **http://127.0.0.1:8467** to inspect the local telemetry dashboard.
 
@@ -56,6 +57,18 @@ In **XTM-4** ([xtm.wbsps.ca](https://xtm.wbsps.ca)), open the Settings Drawer (t
 ./install.sh
 ```
 This installs `ward-beck-audio-tab` to `~/.local/bin/` and registers a systemd user service that automatically starts with your desktop session.
+
+### Option C: Docker (deployable image)
+```bash
+mkdir -p /dev/shm/mxl
+export UID GID=$(id -g)
+docker compose up -d --build      # builds ward-beck-audio-tab:latest and starts it
+```
+The container shares the host network, your PipeWire/Pulse sockets, `/dev/shm/mxl`, the D-Bus
+system socket (Avahi) and `/dev/snd`, and runs as your user. PTP is read passively from the APK
+MQTT broker. Step-by-step instructions for the TAP, the CBC / Radio-Canada MXL test set
+(`./start-mxl-demo.sh`), PTP, SAP/SIP, Avahi discovery and XTM, with live service checks, are
+served by the TAP at **http://127.0.0.1:8467/setup**.
 
 ---
 
@@ -87,8 +100,28 @@ The daemon provides a CORS-enabled HTTP server on port `8467`:
 ## 📦 Requirements
 
 - **Linux**: Ubuntu, Debian, Fedora, Arch Linux, openSUSE, or any distribution running PipeWire or PulseAudio.
-- **Python**: 3.8+ (zero pip packages needed).
-- **Audio utilities**: `pulseaudio-utils` (provides `pactl` and `parec`).
+- **Rust**: 1.80+ to build (`cargo build --release`); the result is a single binary with the UI pages built in.
+- **Audio utilities**: `pulseaudio-utils` (`pactl`, `parec`, `pacat`); optional `pipewire-bin`, `wireplumber`, `alsa-utils`, `avahi-utils` for the pipeline and AoIP layers.
+
+---
+
+## 🦀 Source Layout
+
+| Module | Role |
+|---|---|
+| `src/tap.rs` | Virtual buses and routes, source list and per-source meters, test tone, Bit Buddy, Reset All |
+| `src/http.rs` | HTTP API and UI on `:8467` (SSE meter stream, binary `/pcm` flow audio) |
+| `src/mxl.rs` | EBU DMF / MXL shared-memory domains and flow rings in `/dev/shm/mxl`, Ward-Beck Test Signals domain |
+| `src/testpoint.rs` | One test point at a time (ALSA / PipeWire / MXL / AES67 RTP) with its own ring and meters |
+| `src/aoip.rs` | SAP/SDP, PTP, SIP multicast listeners and passive PTP over MQTT |
+| `src/pipeline.rs` | ALSA → PipeWire → MXL → AoIP layer report |
+| `src/listen.rs` | "What should the meters hear?" picker |
+| `src/cbc.rs`, `src/nmos.rs` | CBC / Radio-Canada MXL test-set proxy, NMOS IS-04 / AoIP discovery |
+| `web/` | The dashboard (`/`) and setup guide (`/setup`) pages, compiled into the binary |
+
+`cargo test --lib` runs the unit tests. For side-by-side testing next to a running daemon:
+`WBS_PORT=18467 WBS_SHM_BASE=/tmp/mxl-test WBS_DRY_RUN=1 target/release/ward-beck-audio-tab --no-browser`
+(dry run skips every change to the live audio graph).
 
 ---
 

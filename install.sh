@@ -12,10 +12,12 @@ echo "===================================================================="
 echo " Installing Ward-Beck Audio Tab"
 echo "===================================================================="
 
-# 1. Install executable
+# 1. Build and install the executable (Rust; needs cargo: https://rustup.rs)
+command -v cargo >/dev/null || { echo "✘ cargo not found. Install Rust first: https://rustup.rs"; exit 1; }
+cargo build --release --manifest-path "$HERE/Cargo.toml"
 mkdir -p "$BIN_DIR"
-cp "$HERE/ward-beck-audio-tab.py" "$BIN_DIR/ward-beck-audio-tab"
-chmod +x "$BIN_DIR/ward-beck-audio-tab"
+systemctl --user stop ward-beck-audio-tab.service 2>/dev/null || true
+install -m 755 "$HERE/target/release/ward-beck-audio-tab" "$BIN_DIR/ward-beck-audio-tab"
 echo "✔ Executable installed to: $BIN_DIR/ward-beck-audio-tab"
 
 # 2. Install systemd user service

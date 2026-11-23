@@ -1,5 +1,6 @@
 .git
-__pycache__
+target
 mxl-hands-on
+__pycache__
+*.py
 *.pyc
-test_aoip_listener.py

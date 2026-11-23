@@ -1,5 +1,0 @@
-# Ward-Beck Audio Tab Dependencies
-# Pure standard library implementation. Requires:
-# - Python 3.8+
-# - Linux PipeWire or PulseAudio audio server
-# - pulseaudio-utils (provides pactl and parec)

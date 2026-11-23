@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
-# Quick launcher for Ward-Beck Audio Tab
+# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+# Quick launcher for Ward-Beck Audio Tab: builds the release binary if needed, then runs it.
+set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec python3 "$HERE/ward-beck-audio-tab.py" "$@"
+BIN="$HERE/target/release/ward-beck-audio-tab"
+if [ ! -x "$BIN" ] || [ -n "$(find "$HERE/src" "$HERE/web" "$HERE/Cargo.toml" -newer "$BIN" -print -quit)" ]; then
+    cargo build --release --manifest-path "$HERE/Cargo.toml"
+fi
+exec "$BIN" "$@"

@@ -6,7 +6,16 @@
 # /dev/shm/mxl, the D-Bus system socket (Avahi) and /dev/snd.
 # See docker-compose.yml, or http://127.0.0.1:8467/setup once running.
 
-FROM python:3.12-slim-bookworm
+# ---- build: the Rust daemon ----
+FROM rust:1-slim-bookworm AS build
+WORKDIR /src
+COPY Cargo.toml Cargo.lock LICENSE ./
+COPY src ./src
+COPY web ./web
+RUN cargo build --release --locked
+
+# ---- runtime ----
+FROM debian:bookworm-slim
 
 LABEL org.opencontainers.image.title="WARD BECK TAP" \
       org.opencontainers.image.description="Ward-Beck Systems audio tap: virtual patchbay, VU bridge, EBU DMF / MXL ring buffers, SAP/SIP/PTP AoIP listener" \
@@ -14,22 +23,21 @@ LABEL org.opencontainers.image.title="WARD BECK TAP" \
       org.opencontainers.image.licenses="LicenseRef-Ward-Beck-Proprietary" \
       org.opencontainers.image.source="https://github.com/WardBeckSystems/Ward-Beck-Audio-Tab"
 
-# pactl/parec (pulseaudio-utils), pw-dump/pw-metadata (pipewire-bin), wpctl (wireplumber),
-# amixer/aplay (alsa-utils), avahi-browse (avahi-utils), ip (iproute2).
+# pactl/parec/pacat (pulseaudio-utils), pw-dump/pw-metadata (pipewire-bin), wpctl (wireplumber),
+# amixer/aplay (alsa-utils), avahi-browse (avahi-utils), ip (iproute2), curl (healthcheck).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      pulseaudio-utils pipewire-bin wireplumber alsa-utils avahi-utils iproute2 \
+      pulseaudio-utils pipewire-bin wireplumber alsa-utils avahi-utils iproute2 procps curl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /opt/wbs-tap
-COPY *.py LICENSE README.md ./
+COPY --from=build /src/target/release/ward-beck-audio-tab /usr/local/bin/ward-beck-audio-tab
+COPY LICENSE README.md /opt/wbs-tap/
 
 # Headless: never try to open a browser inside the container.
-ENV WBS_NO_BROWSER=1 \
-    PYTHONUNBUFFERED=1
+ENV WBS_NO_BROWSER=1
 
 EXPOSE 8467
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD python3 -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8467/api/status', timeout=4).status == 200 else 1)"
+  CMD curl -fsS -o /dev/null --max-time 4 http://127.0.0.1:8467/api/status || exit 1
 
-ENTRYPOINT ["python3", "/opt/wbs-tap/ward-beck-audio-tab.py", "--no-browser"]
+ENTRYPOINT ["/usr/local/bin/ward-beck-audio-tab", "--no-browser"]
