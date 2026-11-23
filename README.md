@@ -41,6 +41,8 @@ It allows Linux users to route desktop audio, YouTube, Spotify, DAWs, and media 
 
 ## 🚀 Quick Start
 
+> Docker, native Linux packaging and Windows: see **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
+
 ### Option A: Direct Run
 One native binary, written in Rust. `run.sh` builds it on first use (needs [cargo](https://rustup.rs)). The generators come from the [Ward-Beck Generators](https://github.com/LikeDotAudio/Ward-Beck-Generators) submodule, so clone with `--recursive` (run.sh fetches it if you forgot):
 ```bash
