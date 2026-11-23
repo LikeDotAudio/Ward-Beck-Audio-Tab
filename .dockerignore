@@ -1,8 +1,17 @@
+# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+# Only Cargo.*, LICENSE, README.md, src/, web/ and Generators/{LICENSE,rust} reach the build.
 .git
+**/.git
+.github
 target
+**/target
+node_modules
+**/node_modules
 mxl-hands-on
+docs
 __pycache__
 *.py
 *.pyc
-Generators/rust/target
-Generators/node_modules
+*.log
+.env
+Generators/web

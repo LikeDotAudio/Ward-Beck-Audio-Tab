@@ -2,20 +2,25 @@
 # WARD BECK TAP as a container.
 #
 #   export UID GID=$(id -g)        # run as your desktop user (owns the audio server)
-#   docker compose up -d --build   # build + start; dashboard: http://127.0.0.1:8467
+#   mkdir -p /dev/shm/mxl
+#   docker compose pull            # prebuilt image from GHCR (linux/amd64, linux/arm64)
+#   docker compose up -d           # start; dashboard: http://127.0.0.1:8467
+#   docker compose up -d --build   # ...or build from this checkout instead
 #   docker compose logs -f tap
 #
 # Add the CBC / Radio-Canada MXL test set alongside it:
 #   ./start-mxl-demo.sh            # or: docker compose -f docker-compose.mxl-demo.yml up -d
 #
-# Full instructions are served by the TAP itself at http://127.0.0.1:8467/setup
+# Full instructions: docs/deploy/linux-docker.md, or http://127.0.0.1:8467/setup once running.
 
 name: wbs-tap
 
 services:
   tap:
+    image: ghcr.io/wardbecksystems/ward-beck-audio-tap:latest
+    # Pull the published image when it is not present locally; `--build` builds this checkout.
+    pull_policy: missing
     build: .
-    image: ward-beck-audio-tab:latest
     container_name: wbs-tap
     restart: unless-stopped
     # Multicast (SAP 239.255.255.255:9875, SIP 224.0.1.75:5060), MQTT on 127.0.0.1:1883
