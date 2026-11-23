@@ -21,7 +21,7 @@ LABEL org.opencontainers.image.title="WARD BECK TAP" \
       org.opencontainers.image.description="Ward-Beck Systems audio tap: virtual patchbay, VU bridge, EBU DMF / MXL ring buffers, SAP/SIP/PTP AoIP listener" \
       org.opencontainers.image.vendor="Ward-Beck Systems (Ward-Beck.ca)" \
       org.opencontainers.image.licenses="LicenseRef-Ward-Beck-Proprietary" \
-      org.opencontainers.image.source="https://github.com/WardBeckSystems/Ward-Beck-Audio-Tab"
+      org.opencontainers.image.source="https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap"
 
 # pactl/parec/pacat (pulseaudio-utils), pw-dump/pw-metadata (pipewire-bin), wpctl (wireplumber),
 # amixer/aplay (alsa-utils), avahi-browse (avahi-utils), ip (iproute2), curl (healthcheck).
