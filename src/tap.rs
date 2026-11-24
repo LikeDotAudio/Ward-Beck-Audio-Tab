@@ -1335,12 +1335,14 @@ pub fn full_restart() {
 pub fn route_table(selected: &str, routes: [bool; 4], physical: &str) -> (Vec<Vec<String>>, bool) {
     let low = selected.to_lowercase();
     let source_is_mic = (low.contains("input") || low.contains("mic")) && !selected.ends_with(".monitor");
+    // 40 ms: a 10 ms loopback asks PipeWire for a 128-sample (2.7 ms) graph cycle, which
+    // underruns the HDMI sink whenever the desktop is busy. 40 ms lets the graph run at 512.
     let lb = |src: &str, sink: &str| {
         vec![
             "module-loopback".to_string(),
             format!("source={src}"),
             format!("sink={sink}"),
-            "latency_msec=10".to_string(),
+            "latency_msec=40".to_string(),
         ]
     };
     let mut out = Vec::new();
@@ -1896,9 +1898,9 @@ mod tests {
         let (l, muted) = route_table("wbs_input_bus.monitor", [true; 4], "alsa_output.x");
         assert!(!muted);
         assert_eq!(l.len(), 4);
-        assert_eq!(l[0], ["module-loopback", "source=wbs_input_bus.monitor", "sink=wbs_meter_tap", "latency_msec=10"]);
-        assert_eq!(l[2], ["module-loopback", "source=wbs_insert_bus.monitor", "sink=alsa_output.x", "latency_msec=10"]);
-        assert_eq!(l[3], ["module-loopback", "source=wbs_insert_bus.monitor", "sink=wbs_test_point", "latency_msec=10"]);
+        assert_eq!(l[0], ["module-loopback", "source=wbs_input_bus.monitor", "sink=wbs_meter_tap", "latency_msec=40"]);
+        assert_eq!(l[2], ["module-loopback", "source=wbs_insert_bus.monitor", "sink=alsa_output.x", "latency_msec=40"]);
+        assert_eq!(l[3], ["module-loopback", "source=wbs_insert_bus.monitor", "sink=wbs_test_point", "latency_msec=40"]);
         let (l, muted) = route_table("alsa_input.usb-mic", [true; 4], "alsa_output.x");
         assert!(muted);
         assert_eq!(l.len(), 3);

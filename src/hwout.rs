@@ -29,6 +29,13 @@ fn s(v: &Value, k: &str) -> String {
     v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
 }
 
+/// ALSA card number and name ("0", "HDA NVidia"), as /proc/asound/cards lists them.
+fn card(v: &Value) -> (String, String) {
+    let p = v.get("properties");
+    let g = |k: &str| p.and_then(|p| p.get(k)).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    (g("alsa.card"), g("alsa.card_name"))
+}
+
 /// (module id, source, sink, made here) for every module-loopback.
 pub fn loopbacks(mods: &str) -> Vec<(String, String, String, bool)> {
     mods.lines()
@@ -50,9 +57,12 @@ pub fn status() -> Value {
         .filter(|x| !s(x, "name").starts_with("wbs_"))
         .map(|x| {
             let name = s(x, "name");
+            let (card, card_name) = card(x);
             json!({
                 "name": name,
                 "label": s(x, "description"),
+                "card": card,
+                "card_name": card_name,
                 "state": s(x, "state"),
                 "virtual": name.contains("snd_aloop") || name.contains("null") || name.starts_with("XTM_"),
                 "default": name == default_sink,
@@ -73,7 +83,8 @@ pub fn status() -> Value {
         if name.ends_with(".monitor") || name.starts_with("wbs_") || name.starts_with("XTM_") {
             continue;
         }
-        sources.push(json!({"name": name, "label": s(&x, "description"), "kind": "input"}));
+        let (card, card_name) = card(&x);
+        sources.push(json!({"name": name, "label": s(&x, "description"), "card": card, "card_name": card_name, "kind": "input"}));
     }
     let mods = run_cmd(&["pactl", "list", "short", "modules"]).1;
     let links: Vec<Value> = loopbacks(&mods)

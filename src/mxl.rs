@@ -1156,7 +1156,9 @@ impl Inner {
                 .arg("--format=s16le")
                 .arg("--rate=48000")
                 .arg("--channels=2")
-                .arg("--latency-msec=10")
+                // 10 ms here would pin the whole PipeWire graph to a 256-sample cycle and
+                // underrun the speakers; 40 ms only batches the 256-frame reads below.
+                .arg("--latency-msec=40")
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
