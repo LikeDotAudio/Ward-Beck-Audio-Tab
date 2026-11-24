@@ -370,11 +370,21 @@ fn do_get(path: &str, query: &str) -> RouteResult {
                         None => return Err("'flows' is not a list".into()),
                     }
                 }
+                // The router's network / MoIP receivers ride after the TAP's own flows.
+                if let Some(a) = o.get_mut("flows").and_then(|f| f.as_array_mut()) {
+                    for slot in 1..testpoint::SLOTS.len() {
+                        if let Some(r) = testpoint::ring_snapshot_in(slot, bins).filter(py::truthy) {
+                            a.push(r);
+                        }
+                    }
+                }
                 o.insert("test_point".into(), testpoint::status());
+                o.insert("receivers".into(), testpoint::receivers_status());
             }
             json_reply(&rep)
         }
         "/api/testpoint" => json_reply(&testpoint::status()),
+        "/api/receiver" => json_reply(&testpoint::receivers_status()),
         "/api/cbc/status" => json_reply(&cbc::state()),
         "/api/bitbuddy" => {
             let _g = state_lock();
@@ -415,8 +425,8 @@ fn do_get(path: &str, query: &str) -> RouteResult {
             let flow_id = seg(p, 4).unwrap_or("");
             let since = qs_int(query, "since", -1)?;
             let max_frames = qs_int(query, "max", 9600)?.max(0) as usize;
-            let res = if flow_id == testpoint::FLOW_ID {
-                testpoint::pcm_since(since, max_frames)
+            let res = if let Some(slot) = testpoint::slot_of_flow(flow_id) {
+                testpoint::pcm_since_in(slot, since, max_frames)
             } else {
                 engine().get_flow_pcm(flow_id, since, max_frames)
             };
@@ -488,6 +498,23 @@ fn do_post(path: &str, body: &str) -> RouteResult {
                 json!({"active": true, "point": testpoint::set_point(&s("kind"), &s("ref"), &s("label"))})
             };
             json_reply(&payload)
+        }
+        "/api/receiver" => {
+            // {slot: network|moip, kind: aoip (default), ref, label} starts that receiver;
+            // {slot, stop: true} stops it. The reply is every receiver's status.
+            let data = loads_obj(body)?;
+            let s = |k: &str| data.get(k).map(py::str_of).unwrap_or_default();
+            let slot = match testpoint::slot_named(&s("slot")) {
+                Some(i) if i != testpoint::TEST_POINT => i,
+                _ => return Err(format!("slot must be network or moip, not '{}'", s("slot"))),
+            };
+            if data.get("stop").map(py::truthy).unwrap_or(false) {
+                testpoint::stop_in(slot);
+            } else {
+                let kind = if s("kind").is_empty() { "aoip".to_string() } else { s("kind") };
+                testpoint::set_in(slot, &kind, &s("ref"), &s("label"));
+            }
+            json_reply(&testpoint::receivers_status())
         }
         "/api/hw" => {
             // Crosspoint: {"source": "...", "sink": "...", "on": true|false}

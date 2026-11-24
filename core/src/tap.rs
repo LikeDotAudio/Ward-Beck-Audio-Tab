@@ -1192,6 +1192,9 @@ pub fn reset_all() -> Value {
     if crate::testpoint::stop_point() {
         processes.push("test point lifted".into());
     }
+    if crate::testpoint::stop_receivers() {
+        processes.push("network / MoIP receivers stopped".into());
+    }
 
     {
         let _g = state_lock();

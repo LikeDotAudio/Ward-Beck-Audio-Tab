@@ -37,6 +37,29 @@ pub const RING_SECONDS: f64 = 10.0; // every test point (ALSA, PipeWire, MXL, Ao
 pub const MAX_CHANNELS: usize = 16;
 pub const FLOW_ID: &str = "wbs-test-point";
 
+/// One receiver per slot, each with its own ring: the test point (slot 0) clips onto
+/// anything; the router's dedicated network and MoIP inputs (slots 1, 2) receive RTP streams.
+pub struct Slot {
+    pub name: &'static str,
+    pub flow_id: &'static str,
+    pub title: &'static str,
+    pub kind: &'static str,
+}
+pub const SLOTS: [Slot; 3] = [
+    Slot { name: "testpoint", flow_id: FLOW_ID, title: "TEST POINT", kind: "testpoint" },
+    Slot { name: "network", flow_id: "wbs-network-rx", title: "NETWORK RX", kind: "receiver" },
+    Slot { name: "moip", flow_id: "wbs-moip-rx", title: "MOIP RX", kind: "receiver" },
+];
+pub const TEST_POINT: usize = 0;
+
+pub fn slot_named(name: &str) -> Option<usize> {
+    SLOTS.iter().position(|s| s.name == name)
+}
+
+pub fn slot_of_flow(flow_id: &str) -> Option<usize> {
+    SLOTS.iter().position(|s| s.flow_id == flow_id)
+}
+
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -312,6 +335,7 @@ struct TpState {
 }
 
 struct TestPoint {
+    slot: usize,
     kind: String,
     reference: String,
     label: String,
@@ -326,8 +350,9 @@ struct TestPoint {
 type Shared = Arc<TestPoint>;
 
 impl TestPoint {
-    fn new(kind: &str, reference: &str, label: &str) -> Shared {
+    fn new(slot: usize, kind: &str, reference: &str, label: &str) -> Shared {
         Arc::new(TestPoint {
+            slot,
             kind: kind.to_string(),
             reference: reference.to_string(),
             label: if label.is_empty() { reference.to_string() } else { label.to_string() },
@@ -353,7 +378,7 @@ impl TestPoint {
     // -- lifecycle --
     fn start(self: &Shared) {
         let me = self.clone();
-        let h = std::thread::Builder::new().name(format!("test-point-{}", self.kind)).spawn(move || me.run());
+        let h = std::thread::Builder::new().name(format!("{}-{}", SLOTS[self.slot].name, self.kind)).spawn(move || me.run());
         if let Ok(h) = h {
             *lock(&self.thread) = Some(h);
         }
@@ -736,9 +761,11 @@ impl TestPoint {
             Value::Object(m) => m,
             _ => Map::new(),
         };
-        d.insert("flow_id".into(), json!(FLOW_ID));
-        d.insert("label".into(), json!(format!("TEST POINT \u{b7} {}", self.label)));
-        d.insert("kind".into(), json!("testpoint"));
+        let slot = &SLOTS[self.slot];
+        d.insert("flow_id".into(), json!(slot.flow_id));
+        d.insert("label".into(), json!(format!("{} \u{b7} {}", slot.title, self.label)));
+        d.insert("kind".into(), json!(slot.kind));
+        d.insert("slot".into(), json!(slot.name));
         d.insert("buffer_length".into(), json!(r.length));
         d.insert("write_head".into(), json!(head));
         // meters read one packet behind the writer
@@ -933,28 +960,30 @@ pub fn diagnosis(grp: &str, port: i64, iface: &str, base_rate: f64, rate: f64, u
 // API
 // ---------------------------------------------------------------------------
 
-fn active() -> &'static Mutex<Option<Shared>> {
-    static A: OnceLock<Mutex<Option<Shared>>> = OnceLock::new();
-    A.get_or_init(|| Mutex::new(None))
+fn active() -> &'static Mutex<[Option<Shared>; 3]> {
+    static A: OnceLock<Mutex<[Option<Shared>; 3]>> = OnceLock::new();
+    A.get_or_init(|| Mutex::new([None, None, None]))
 }
 
-fn current() -> Option<Shared> {
-    lock(active()).clone()
+fn current_in(slot: usize) -> Option<Shared> {
+    lock(active()).get(slot).cloned().flatten()
 }
 
-pub fn set_point(kind: &str, reference: &str, label: &str) -> Value {
-    stop_point();
-    let tp = TestPoint::new(kind, reference, label);
-    *lock(active()) = Some(tp.clone());
+pub fn set_in(slot: usize, kind: &str, reference: &str, label: &str) -> Value {
+    stop_in(slot);
+    let tp = TestPoint::new(slot, kind, reference, label);
+    crate::log::info(SLOTS[slot].name, &format!("{} {} ({})", kind, reference, tp.label));
+    lock(active())[slot] = Some(tp.clone());
     tp.start();
     std::thread::sleep(Duration::from_millis(150));
     tp.info()
 }
 
-pub fn stop_point() -> bool {
-    let tp = lock(active()).take();
+pub fn stop_in(slot: usize) -> bool {
+    let tp = lock(active())[slot].take();
     match tp {
         Some(tp) => {
+            crate::log::info(SLOTS[slot].name, &format!("stopped ({})", tp.label));
             tp.stop();
             true
         }
@@ -962,24 +991,62 @@ pub fn stop_point() -> bool {
     }
 }
 
-pub fn status() -> Value {
-    let tp = current();
+pub fn status_in(slot: usize) -> Value {
+    let tp = current_in(slot);
     let mut m = Map::new();
     m.insert("active".into(), json!(tp.is_some()));
+    m.insert("flow_id".into(), json!(SLOTS[slot].flow_id));
     m.insert("point".into(), tp.map(|t| t.info()).unwrap_or(Value::Null));
     Value::Object(m)
 }
 
+pub fn ring_snapshot_in(slot: usize, bins: usize) -> Option<Value> {
+    current_in(slot)?.ring_snapshot(bins)
+}
+
+pub fn pcm_since_in(slot: usize, since: i64, max_frames: usize) -> Option<PcmChunk> {
+    let tp = current_in(slot)?;
+    let s = lock(&tp.st);
+    s.ring.as_ref()?.pcm_since(since, max_frames)
+}
+
+/// The router's dedicated receivers: {network: {active, flow_id, point}, moip: {...}}.
+pub fn receivers_status() -> Value {
+    let mut m = Map::new();
+    for (i, s) in SLOTS.iter().enumerate().skip(1) {
+        m.insert(s.name.into(), status_in(i));
+    }
+    Value::Object(m)
+}
+
+pub fn stop_receivers() -> bool {
+    (1..SLOTS.len()).fold(false, |any, i| stop_in(i) || any)
+}
+
+pub fn set_point(kind: &str, reference: &str, label: &str) -> Value {
+    set_in(TEST_POINT, kind, reference, label)
+}
+
+pub fn stop_point() -> bool {
+    stop_in(TEST_POINT)
+}
+
+pub fn status() -> Value {
+    let mut v = status_in(TEST_POINT);
+    if let Some(o) = v.as_object_mut() {
+        o.remove("flow_id");
+    }
+    v
+}
+
 pub fn ring_snapshot(bins: usize) -> Option<Value> {
-    current()?.ring_snapshot(bins)
+    ring_snapshot_in(TEST_POINT, bins)
 }
 
 /// New ring audio since the since cursor (ring position; < 0 = start now, no frames), newest
 /// max_frames at most. Same semantics as the /pcm route in ward-beck-audio-tab.py.
 pub fn pcm_since(since: i64, max_frames: usize) -> Option<PcmChunk> {
-    let tp = current()?;
-    let s = lock(&tp.st);
-    s.ring.as_ref()?.pcm_since(since, max_frames)
+    pcm_since_in(TEST_POINT, since, max_frames)
 }
 
 #[cfg(test)]
@@ -1126,7 +1193,7 @@ mod tests {
 
     #[test]
     fn info_contract_and_unknown_kind() {
-        let tp = TestPoint::new("nmos", "x", "");
+        let tp = TestPoint::new(TEST_POINT, "nmos", "x", "");
         tp.start();
         std::thread::sleep(Duration::from_millis(50));
         let i = tp.info();
@@ -1146,8 +1213,25 @@ mod tests {
     }
 
     #[test]
+    fn receivers_are_their_own_flows() {
+        assert_eq!(slot_named("network"), Some(1));
+        assert_eq!(slot_named("moip"), Some(2));
+        assert_eq!(slot_of_flow("wbs-moip-rx"), Some(2));
+        let tp = TestPoint::new(1, "aoip", "studio", "");
+        lock(&tp.st).ring = Some(TapRing::new(2, 48, 48000, 0.0));
+        let d = tp.ring_snapshot(60).unwrap();
+        assert_eq!(d["flow_id"], "wbs-network-rx");
+        assert_eq!(d["kind"], "receiver");
+        assert_eq!(d["slot"], "network");
+        assert_eq!(d["label"], "NETWORK RX \u{b7} studio");
+        let r = receivers_status();
+        assert_eq!(r["moip"]["flow_id"], "wbs-moip-rx");
+        assert_eq!(r["network"]["active"], false);
+    }
+
+    #[test]
     fn ring_snapshot_contract() {
-        let tp = TestPoint::new("pw", "111", "lbl");
+        let tp = TestPoint::new(TEST_POINT, "pw", "111", "lbl");
         {
             let mut s = lock(&tp.st);
             s.packet_frames = 1024;
@@ -1164,7 +1248,7 @@ mod tests {
             vec![
                 "kind", "ref", "label", "source", "status", "error", "hint", "fix", "sample_rate", "channel_count",
                 "packet_frames", "packet_ms", "ring_frames", "ring_ms", "packets", "lost_packets", "flow_id",
-                "buffer_length", "write_head", "meter_head", "write_seq", "channels"
+                "slot", "buffer_length", "write_head", "meter_head", "write_seq", "channels"
             ]
         );
         assert_eq!(d["kind"], "testpoint");
