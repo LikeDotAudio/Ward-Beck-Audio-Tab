@@ -308,6 +308,7 @@ fn do_get(path: &str, query: &str) -> RouteResult {
             json_reply(&listen::state())
         }
         "/setup" | "/setup/" => Reply::Html(crate::setup::SETUP_HTML),
+        "/api/hw" => json_reply(&crate::hwout::status()),
         "/api/status" => json_reply(&status_payload()),
         "/api/aoip" => {
             let mut payload = {
@@ -324,6 +325,7 @@ fn do_get(path: &str, query: &str) -> RouteResult {
             json_reply(&payload)
         }
         "/api/aoip/multicast" => json_reply(&aoip::snapshot()),
+        "/api/aes67" => json_reply(&crate::aes67::status()),
         "/api/nmos" => {
             let _g = state_lock();
             json_reply(&json!({"status": "ok", "count": nmos::nmos_count(), "nodes": nmos::nmos_nodes()}))
@@ -458,6 +460,20 @@ fn do_post(path: &str, body: &str) -> RouteResult {
                 json!({"active": true, "point": testpoint::set_point(&s("kind"), &s("ref"), &s("label"))})
             };
             json_reply(&payload)
+        }
+        "/api/hw" => {
+            // Crosspoint: {"source": "...", "sink": "...", "on": true|false}
+            let data = loads(body)?;
+            let g = |k: &str| data.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let on = data.get("on").map(py::truthy).unwrap_or(true);
+            let out = {
+                let _g = state_lock();
+                crate::hwout::set(&g("source"), &g("sink"), on)
+            };
+            match out {
+                Ok(v) => json_reply(&v),
+                Err(e) => Reply::Json(400, py::dumps(&json!({"error": e})).into_bytes()),
+            }
         }
         "/api/listen" => {
             let data = loads(body)?;
@@ -602,6 +618,7 @@ fn do_post(path: &str, body: &str) -> RouteResult {
             let level_db = py::float_of(data.get("level_db").unwrap_or(&json!(-20.0)))?;
             cbc_post_reply("http://127.0.0.1:9600/audio/flow1/level", &json!({"level_db": level_db}))
         }
+        "/api/aes67" => json_reply(&crate::aes67::control(&loads_obj(body)?)?),
         "/api/reset_all" => json_reply(&tap::reset_all()),
         "/api/restart" => {
             tap::full_restart();

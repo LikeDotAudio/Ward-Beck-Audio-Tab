@@ -605,7 +605,7 @@ pub fn run_cmd(args: &[&str]) -> (i32, String, String) {
 }
 
 /// run_cmd for commands that change the live audio graph (no-op under WBS_DRY_RUN).
-fn run_mut(args: &[&str]) -> (i32, String, String) {
+pub(crate) fn run_mut(args: &[&str]) -> (i32, String, String) {
     if dry_run() {
         println!("[DRY RUN] {}", args.join(" "));
         return (-1, String::new(), "dry run".into());
@@ -1081,6 +1081,7 @@ pub fn wbs_module_ids(mods_out: &str) -> Vec<i64> {
 /// Complete teardown: restores the hardware default sink, stops generators, unloads all wbs_ modules.
 pub fn abandon_ship() {
     stop_test_tone();
+    let _ = guard(crate::aes67::stop_all);
     let _ = guard(|| engine().stop());
 
     let mut phys = detect_physical_sink();
@@ -1201,6 +1202,9 @@ pub fn reset_all() -> Value {
             generators.push("ABB-1 Bit Buddy".into());
         }
         stop_bit_buddy();
+    }
+    if let Some(tx) = guard(crate::aes67::stop_all) {
+        generators.extend(tx);
     }
     match guard(|| engine().stop_generators()) {
         Some(g) => generators.extend(g),

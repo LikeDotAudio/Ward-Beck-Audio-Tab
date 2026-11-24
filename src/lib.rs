@@ -7,6 +7,7 @@
 //!   mxl       mxl_engine.py          MXL domain/flow rings in /dev/shm/mxl
 //!   testpoint test_point.py          one test point at a time, own ring + meters
 //!   aoip      aoip_listener.py       SAP/SDP, PTP, SIP multicast + PTP over MQTT
+//!   aes67     (new)                  AES67 RTP + SAP transmitter per MXL flow
 //!   pipeline  pipeline_inspector.py  ALSA / PipeWire / MXL / AoIP layer report
 //!   listen    listen_picker.py       "what should the meters hear?" picker
 //!   setup     setup_page.py          /setup deployment guide
@@ -19,6 +20,7 @@ pub mod util;
 pub mod mxl;
 pub mod testpoint;
 pub mod aoip;
+pub mod aes67;
 pub mod pipeline;
 pub mod listen;
 pub mod setup;
@@ -26,3 +28,4 @@ pub mod tap;
 pub mod cbc;
 pub mod nmos;
 pub mod http;
+pub mod hwout;

@@ -117,6 +117,7 @@ fn main() {
 
     aoip::set_dante_ip_provider(Box::new(nmos::dante_ips));
     aoip::start(util::shutdown_flag());
+    ward_beck_audio_tab::aes67::autostart();
 
     let no_browser = has(&["--no-browser", "--headless", "--daemon"])
         || std::env::var("WBS_NO_BROWSER").unwrap_or_else(|_| "0".into()) == "1";
