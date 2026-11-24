@@ -333,7 +333,7 @@ fn do_get(path: &str, query: &str) -> RouteResult {
         }
         "/api/aoip/multicast" => json_reply(&aoip::snapshot()),
         "/api/aes67" => json_reply(&crate::aes67::status()),
-        "/api/ntp" => json_reply(&crate::ntp::status()),
+        "/api/ntp" => json_reply(&crate::ntp::report()),
         "/api/diagnostics" => json_reply(&crate::diag::report()),
         "/api/diagnostics/bundle" => Reply::Raw(
             200,

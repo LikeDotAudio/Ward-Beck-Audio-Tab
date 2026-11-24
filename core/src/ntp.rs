@@ -5,6 +5,8 @@
 //! or systemd-timesyncd (`timedatectl`). Read-only: nothing here changes the clock.
 
 use serde_json::{json, Map, Value};
+use std::collections::VecDeque;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::util::run_cmd;
@@ -112,6 +114,7 @@ pub fn parse_chrony_tracking(csv: &str) -> Map<String, Value> {
     let us = |s: &str| secs(s).map(|v| format!("{:+.0}us", v * 1e6));
     m.insert("server".into(), json!(f[1]));
     m.insert("stratum".into(), json!(f[2]));
+    m.insert("ref_time".into(), json!(f[3])); // changes on every update the server sends
     m.insert("offset".into(), json!(us(f[4])));
     m.insert("jitter".into(), json!(us(f[6])));
     m.insert("frequency".into(), json!(format!("{}ppm", f[7])));
@@ -119,6 +122,74 @@ pub fn parse_chrony_tracking(csv: &str) -> Map<String, Value> {
     m.insert("poll_interval".into(), json!(format!("{}s", f[12])));
     m.insert("leap".into(), json!(f[13].to_lowercase()));
     m
+}
+
+// ---------------------------------------------------------------------------
+// Receipts: every NTP answer the clock took, as the TAP saw it
+// ---------------------------------------------------------------------------
+
+const RECEIPTS_MAX: usize = 200;
+const RECEIPT_EVERY: Duration = Duration::from_secs(10);
+static RECEIPTS: Mutex<VecDeque<Value>> = Mutex::new(VecDeque::new());
+
+/// What changes when a new answer arrives: timesyncd's packet count, chrony's reference time.
+pub fn receipt_key(st: &Value) -> Option<String> {
+    let s = st.get("status")?;
+    let k = s.get("packets").or_else(|| s.get("ref_time"))?;
+    let k = match k { Value::String(v) => v.clone(), Value::Null => return None, v => v.to_string() };
+    Some(format!("{}|{}", s.get("server").and_then(Value::as_str).unwrap_or(""), k))
+}
+
+/// The receipt for a status: when, from whom, and what the clock made of it.
+pub fn receipt_of(st: &Value, t: f64, first: bool) -> Value {
+    let s = &st["status"];
+    let g = |k: &str| s.get(k).cloned().unwrap_or(Value::Null);
+    json!({
+        "t": t, "first": first, "server": g("server"), "stratum": g("stratum"),
+        "offset": g("offset"), "delay": g("delay"), "jitter": g("jitter"),
+        "poll": g("poll_interval"), "packets": g("packets"), "synchronized": st["synchronized"],
+    })
+}
+
+/// Background: watch the NTP daemon and log each answer it takes (the Timing tab's NTP log).
+pub fn receipts_loop() {
+    let mut last: Option<String> = None;
+    loop {
+        let st = status();
+        if let Some(key) = receipt_key(&st) {
+            if last.as_deref() != Some(key.as_str()) {
+                let r = receipt_of(&st, crate::util::now_f64(), last.is_none());
+                crate::log::info(
+                    "ntp",
+                    &format!(
+                        "{} {} offset {} delay {} (stratum {})",
+                        if last.is_none() { "last answer" } else { "answer" },
+                        r["server"].as_str().unwrap_or("?"),
+                        r["offset"].as_str().unwrap_or("?"),
+                        r["delay"].as_str().unwrap_or("?"),
+                        r["stratum"].as_str().unwrap_or("?")
+                    ),
+                );
+                let mut q = RECEIPTS.lock().unwrap_or_else(|e| e.into_inner());
+                q.push_back(r);
+                while q.len() > RECEIPTS_MAX {
+                    q.pop_front();
+                }
+                last = Some(key);
+            }
+        }
+        std::thread::sleep(RECEIPT_EVERY);
+    }
+}
+
+/// GET /api/ntp: the status plus the receipts log, newest first.
+pub fn report() -> Value {
+    let mut st = status();
+    let q = RECEIPTS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(o) = st.as_object_mut() {
+        o.insert("receipts".into(), Value::Array(q.iter().rev().cloned().collect()));
+    }
+    st
 }
 
 pub fn status() -> Value {
@@ -217,6 +288,18 @@ mod tests {
         assert_eq!(f["options"][0]["command"], "sudo timedatectl ntp-servers enp12s0 time.nrc.ca time.chu.nrc.ca");
         assert!(f["options"][1]["command"].as_str().unwrap().contains("NTP=time.nrc.ca time.chu.nrc.ca"));
         assert!(nrc_fix("chrony", None)["options"][0]["command"].as_str().unwrap().contains("chronyc add server time.nrc.ca"));
+    }
+
+    #[test]
+    fn a_receipt_is_logged_per_answer() {
+        let st = json!({"synchronized": true, "status": {"server": "132.246.11.229 (time.nrc.ca)", "packets": "21", "offset": "-1.292ms", "delay": "28.699ms"}});
+        assert_eq!(receipt_key(&st).as_deref(), Some("132.246.11.229 (time.nrc.ca)|21"));
+        let r = receipt_of(&st, 5.0, true);
+        assert_eq!(r["offset"], "-1.292ms");
+        assert_eq!(r["first"], true);
+        let chrony = json!({"status": {"server": "1.2.3.4", "ref_time": "1700000000.1"}});
+        assert_eq!(receipt_key(&chrony).as_deref(), Some("1.2.3.4|1700000000.1"));
+        assert_eq!(receipt_key(&json!({"status": {"server": "x"}})), None);
     }
 
     #[test]
