@@ -132,6 +132,8 @@ fn main() {
     }
 
     install_signal_handlers();
+    ward_beck_audio_tab::diag::startup_banner();
+    std::thread::spawn(ward_beck_audio_tab::log::client_summary_loop);
 
     println!("[WARD BECK TAP] Initializing virtual buses, multi-source meters, and signal tap point...");
     tap::full_restart();

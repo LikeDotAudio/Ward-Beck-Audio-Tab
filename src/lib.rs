@@ -22,6 +22,8 @@ pub mod testpoint;
 pub mod aoip;
 pub mod ntp;
 pub mod sys;
+pub mod log;
+pub mod diag;
 pub mod aes67;
 pub mod pipeline;
 pub mod listen;

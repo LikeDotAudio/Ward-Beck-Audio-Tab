@@ -562,7 +562,10 @@ pub fn run_cmd(args: &[&str]) -> (i32, String, String) {
         .spawn()
     {
         Ok(c) => c,
-        Err(e) => return (-1, String::new(), e.to_string()),
+        Err(e) => {
+            crate::log::command_failed(args, -1, &e.to_string());
+            return (-1, String::new(), e.to_string());
+        }
     };
     let mut so = child.stdout.take();
     let mut se = child.stderr.take();
@@ -587,11 +590,11 @@ pub fn run_cmd(args: &[&str]) -> (i32, String, String) {
             Ok(Some(st)) => {
                 let o = ro.join().unwrap_or_default();
                 let e = re.join().unwrap_or_default();
-                return (
-                    st.code().unwrap_or(-1),
-                    String::from_utf8_lossy(&o).trim().to_string(),
-                    String::from_utf8_lossy(&e).trim().to_string(),
-                );
+                let (code, err) = (st.code().unwrap_or(-1), String::from_utf8_lossy(&e).trim().to_string());
+                if code != 0 {
+                    crate::log::command_failed(args, code, &err);
+                }
+                return (code, String::from_utf8_lossy(&o).trim().to_string(), err);
             }
             Ok(None) if start.elapsed() >= timeout => {
                 let _ = child.kill();

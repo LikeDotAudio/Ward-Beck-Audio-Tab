@@ -158,6 +158,9 @@ fn unsupported(method: &str) -> Reply {
 fn handle(mut rq: Request) {
     let (path, query) = split_target(rq.url());
     let method = rq.method().clone();
+    let ip = rq.remote_addr().map(|a| a.ip().to_string()).unwrap_or_default();
+    let origin = rq.headers().iter().find(|h| h.field.equiv("Origin")).map(|h| h.value.as_str().to_string()).unwrap_or_default();
+    crate::log::client_request(&ip, &origin, method.as_str(), &path);
     if path == "/api/heartbeat" || rq.headers().iter().any(|h| h.field.equiv("Sec-Fetch-Mode")) {
         tap::client_checkin();
     }
@@ -177,7 +180,11 @@ fn handle(mut rq: Request) {
                 return;
             }
             match read_body(&mut rq) {
-                Ok(body) => do_post(&path, &body),
+                Ok(body) => {
+                    // Every POST changes something: always logged, with who asked.
+                    crate::log::info("http", &format!("POST {path} from {ip} {origin} {}", body.chars().take(160).collect::<String>()));
+                    do_post(&path, &body)
+                }
                 Err(e) => Err(e),
             }
         }
@@ -186,7 +193,7 @@ fn handle(mut rq: Request) {
     match result {
         Ok(reply) => send(rq, reply),
         Err(e) => {
-            eprintln!("[WARD BECK TAP] {} {} failed: {}", method.as_str(), path, e);
+            crate::log::error("http", &format!("{} {} from {ip} failed: {e}", method.as_str(), path));
             send(rq, Reply::Empty(500));
         }
     }
@@ -327,6 +334,20 @@ fn do_get(path: &str, query: &str) -> RouteResult {
         "/api/aoip/multicast" => json_reply(&aoip::snapshot()),
         "/api/aes67" => json_reply(&crate::aes67::status()),
         "/api/ntp" => json_reply(&crate::ntp::status()),
+        "/api/diagnostics" => json_reply(&crate::diag::report()),
+        "/api/diagnostics/bundle" => Reply::Raw(
+            200,
+            vec![
+                ("Content-Type".into(), "text/plain; charset=utf-8".into()),
+                ("Content-Disposition".into(), format!("attachment; filename=\"ward-beck-tap-{}.txt\"", std::env::consts::OS)),
+            ],
+            crate::diag::bundle().into_bytes(),
+        ),
+        "/api/log" => {
+            let since = qs_first(query, "since").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+            let (seq, lines) = crate::log::tail_since(since, 1000);
+            json_reply(&serde_json::json!({"seq": seq, "lines": lines, "file": crate::log::log_path().display().to_string()}))
+        }
         "/api/nmos" => {
             let _g = state_lock();
             json_reply(&json!({"status": "ok", "count": nmos::nmos_count(), "nodes": nmos::nmos_nodes()}))

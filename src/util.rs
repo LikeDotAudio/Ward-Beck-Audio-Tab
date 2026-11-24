@@ -39,13 +39,19 @@ pub fn run_cmd(args: &[&str], timeout: Duration) -> Option<String> {
 /// Like run_cmd but also returns the exit code (-1 if killed by a signal).
 pub fn run_cmd_full(args: &[&str], timeout: Duration) -> Option<(String, i32)> {
     let (prog, rest) = args.split_first()?;
-    let mut child = Command::new(prog)
+    let mut child = match Command::new(prog)
         .args(rest)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .ok()?;
+    {
+        Ok(c) => c,
+        Err(e) => {
+            crate::log::command_failed(args, -1, &e.to_string());
+            return None;
+        }
+    };
     let mut stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut buf = Vec::new();
@@ -63,6 +69,7 @@ pub fn run_cmd_full(args: &[&str], timeout: Duration) -> Option<(String, i32)> {
                 if start.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
+                    crate::log::command_failed(args, -2, &format!("timed out after {:.1} s", timeout.as_secs_f64()));
                     return None;
                 }
                 std::thread::sleep(Duration::from_millis(5));
@@ -74,8 +81,9 @@ pub fn run_cmd_full(args: &[&str], timeout: Duration) -> Option<(String, i32)> {
 
 /// True if `prog` is on PATH (Python: shutil.which).
 pub fn which(prog: &str) -> bool {
+    let exe = format!("{prog}{}", std::env::consts::EXE_SUFFIX);
     std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).any(|d| d.join(prog).is_file()))
+        .map(|p| std::env::split_paths(&p).any(|d| d.join(prog).is_file() || d.join(&exe).is_file()))
         .unwrap_or(false)
 }
 
