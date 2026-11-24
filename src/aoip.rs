@@ -397,6 +397,7 @@ impl Registry {
                 g.insert("source_ip".into(), c["source_ip"].clone());
                 g.insert("priority1".into(), c["priority1"].clone());
                 g.insert("sync_health".into(), c["sync_health"].clone());
+                g.insert("interface".into(), c["interface"].clone());
                 Value::Object(g)
             })
             .collect();
@@ -1004,6 +1005,8 @@ pub fn parse_ptp_discovery(rows: &Value) -> Result<Vec<Value>, String> {
         c.insert("delay_req_count".into(), json!(mget("Delay_Req") + mget("Pdelay_Req")));
         c.insert("announce_count".into(), json!(mget("Announce")));
         c.insert("last_seen_text".into(), r.get("last_seen").cloned().unwrap_or(Value::Null));
+        // The NIC the clock was heard on (built-in sniffer only).
+        c.insert("interface".into(), r.get("interface").filter(|v| py::truthy(v)).cloned().unwrap_or(Value::Null));
         out.push(Value::Object(c));
     }
     Ok(out)
@@ -1139,6 +1142,7 @@ pub fn apk_rows(snapshot: &Value, vendor: &dyn Fn(&str) -> Option<String>) -> Va
                         "time_source": c["time_source"],
                         "sync_health": c["diagnostics"]["verdict"],
                         "messages": c["messages"],
+                        "interface": c["interface"],
                         "_row_state": "online",
                     })
                 })
@@ -1516,8 +1520,9 @@ pub fn start(stop: Arc<AtomicBool>) {
 }
 
 /// The PTP leader an AES67 sender should name: a PTPv2 grandmaster (not gPTP, not
-/// Dante PTPv1), AES67/RAVENNA networks first, then the best priority1, then domain.
-pub fn pick_ptp_leader(gms: &Value) -> Option<(String, i64)> {
+/// Dante PTPv1) on the NIC the streams leave from, AES67/RAVENNA networks first,
+/// then the best priority1, then domain.
+pub fn pick_ptp_leader(gms: &Value, tx_iface: Option<&str>) -> Option<(String, i64)> {
     let mut v2: Vec<&Value> = gms
         .as_array()?
         .iter()
@@ -1526,6 +1531,7 @@ pub fn pick_ptp_leader(gms: &Value) -> Option<(String, i64)> {
         .collect();
     v2.sort_by_key(|g| {
         (
+            tx_iface.is_some() && g["interface"].as_str() != tx_iface,
             !g["network"].as_str().unwrap_or("").contains("aes67"),
             g["priority1"].as_i64().unwrap_or(255),
             g["domain"].as_i64().unwrap_or(0),
@@ -1536,7 +1542,13 @@ pub fn pick_ptp_leader(gms: &Value) -> Option<(String, i64)> {
 
 /// The PTP leader heard right now, if any.
 pub fn ptp_leader() -> Option<(String, i64)> {
-    pick_ptp_leader(&snapshot()["ptp"]["grandmasters"])
+    let host = crate::aes67::host_v4();
+    let iface = apkaudio_ptp::net::list_interfaces()
+        .unwrap_or_default()
+        .into_iter()
+        .find(|(_, _, _, ip)| *ip == host)
+        .map(|(name, ..)| name);
+    pick_ptp_leader(&snapshot()["ptp"]["grandmasters"], iface.as_deref())
 }
 
 /// Thread-safe JSON-ready view of everything heard on the multicast groups.
@@ -1931,10 +1943,17 @@ mod tests {
             {"version": 2, "domain": 1, "network": "dante", "identity": "00-1d-c1-ff-fe-00-00-03", "priority1": 10},
             {"version": 2, "domain": 0, "network": "aes67", "identity": "00-0a-92-ff-fe-02-77-5b", "priority1": 128}
         ]);
-        assert_eq!(pick_ptp_leader(&gms), Some(("00-0a-92-ff-fe-02-77-5b".into(), 0)));
-        assert_eq!(pick_ptp_leader(&json!([])), None);
+        assert_eq!(pick_ptp_leader(&gms, None), Some(("00-0a-92-ff-fe-02-77-5b".into(), 0)));
+        assert_eq!(pick_ptp_leader(&json!([]), None), None);
+        // Two segments on domain 44: the leader is the one on the NIC the streams leave from.
+        let split = json!([
+            {"version": 2, "domain": 44, "network": "ravenna/aes67", "identity": "00-07-f5-ff-fe-42-06-a2", "priority1": 20, "interface": "enp12s0"},
+            {"version": 2, "domain": 44, "network": "ravenna/aes67", "identity": "00-07-f5-ff-fe-00-54-72", "priority1": 220, "interface": "enp5s0f0"}
+        ]);
+        assert_eq!(pick_ptp_leader(&split, Some("enp5s0f0")).unwrap().0, "00-07-f5-ff-fe-00-54-72");
+        assert_eq!(pick_ptp_leader(&split, Some("enp12s0")).unwrap().0, "00-07-f5-ff-fe-42-06-a2");
         assert_eq!(
-            crate::aes67::refclk(pick_ptp_leader(&gms)),
+            crate::aes67::refclk(pick_ptp_leader(&gms, None)),
             "ptp=IEEE1588-2008:00-0A-92-FF-FE-02-77-5B:0"
         );
     }
@@ -2028,7 +2047,7 @@ mod tests {
                 "clock_identity", "version", "variant", "domain", "source_ip", "network", "vendor",
                 "grandmaster_identity", "is_grandmaster", "priority1", "priority2", "clock_class", "clock_accuracy",
                 "steps_removed", "time_source", "sync_health", "online", "sync_count", "follow_up_count",
-                "delay_req_count", "announce_count", "last_seen_text"
+                "delay_req_count", "announce_count", "last_seen_text", "interface"
             ]
         );
     }

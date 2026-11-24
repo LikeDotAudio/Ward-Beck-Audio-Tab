@@ -53,7 +53,7 @@ fn dry_run() -> bool {
     crate::tap::dry_run() && ttl() != 0
 }
 
-fn host_v4() -> Ipv4Addr {
+pub fn host_v4() -> Ipv4Addr {
     wbs_host_ip().parse().unwrap_or(Ipv4Addr::LOCALHOST)
 }
 
