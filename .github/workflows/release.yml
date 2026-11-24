@@ -1,5 +1,9 @@
 # Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
-# Build, test, smoke-run and package the Ward-Beck Audio Tap for Linux, Windows and macOS.
+# Build, test, smoke-run and package the Ward-Beck Audio Tap: one core (core/), three
+# build types (linux/, windows/, macos/), three downloads:
+#   ward-beck-audio-tap-linux.tar.gz   (x86_64 + arm64 binaries; install.sh picks)
+#   ward-beck-audio-tap-windows.zip    (x64)
+#   ward-beck-audio-tap-macos.zip      (universal: Apple silicon + Intel)
 #
 #   every push / PR -> build + tests + a smoke run on each OS; logs kept as artifacts
 #   push to main    -> the "nightly" pre-release is replaced with these builds
@@ -150,33 +154,63 @@ jobs:
           xcrun notarytool submit notarize.zip --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
           rm -f cert.p12 notarize.zip
 
-      - name: Package
+      # Linux: both CPUs go into one download, assembled by the linux job below.
+      - name: Linux binary
+        if: runner.os == 'Linux'
         run: |
-          N=ward-beck-audio-tap-${{ matrix.name }}
-          mkdir -p "dist/$N"
-          cp target/release/${{ matrix.exe }} README.md LICENSE "dist/$N/"
-          case "${{ matrix.name }}" in
-            linux-*)   cp install.sh uninstall.sh ward-beck-audio-tab.service "dist/$N/" ;;
-            windows-*) cp packaging/windows/*.ps1 "dist/$N/" ;;
-            macos-*)   cp packaging/macos/*.sh "dist/$N/" ;;
-          esac
-          cd dist
-          case "${{ matrix.name }}" in
-            windows-*) 7z a "$N.zip" "$N" > /dev/null ;;
-            macos-*)   ditto -c -k --keepParent "$N" "$N.zip" ;;
-            *)         tar czf "$N.tar.gz" "$N" ;;
-          esac
-          ls -l
-
+          mkdir -p dist
+          cp target/release/ward-beck-audio-tab "dist/ward-beck-audio-tab-${MATRIX_NAME#linux-}"
+        env:
+          MATRIX_NAME: ${{ matrix.name }}
       - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: linux-bin-${{ matrix.name }}
+          path: dist/ward-beck-audio-tab-*
+
+      - name: Package (Windows, macOS)
+        if: runner.os != 'Linux'
+        run: |
+          case "${{ matrix.name }}" in windows-*) OS=windows ;; *) OS=macos ;; esac
+          N=ward-beck-audio-tap-$OS
+          mkdir -p "dist/$N"
+          cp target/release/${{ matrix.exe }} LICENSE "dist/$N/"
+          cp $OS/* "dist/$N/"
+          cd dist
+          if [ $OS = windows ]; then 7z a "$N.zip" "$N" > /dev/null; else ditto -c -k --keepParent "$N" "$N.zip"; fi
+          ls -l
+      - uses: actions/upload-artifact@v4
+        if: runner.os != 'Linux'
         with:
           name: package-${{ matrix.name }}
-          path: |
-            dist/*.zip
-            dist/*.tar.gz
+          path: dist/*.zip
+
+  linux:
+    name: package linux
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: linux-bin-*
+          merge-multiple: true
+          path: bins
+      - name: Package
+        run: |
+          N=ward-beck-audio-tap-linux
+          mkdir -p "dist/$N"
+          install -m 755 bins/ward-beck-audio-tab-* "dist/$N/"
+          cp linux/install.sh linux/uninstall.sh linux/ward-beck-audio-tab.service linux/README.md LICENSE "dist/$N/"
+          tar -C dist -czf "dist/$N.tar.gz" "$N"
+          tar -tzf "dist/$N.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-linux
+          path: dist/*.tar.gz
 
   publish:
-    needs: build
+    needs: [build, linux]
     if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     env:
@@ -197,10 +231,12 @@ jobs:
 
           | System | Download | Install |
           |---|---|---|
-          | Linux x86_64 | [ward-beck-audio-tap-linux-x86_64.tar.gz]($dl/ward-beck-audio-tap-linux-x86_64.tar.gz) | \`bash install.sh\` |
-          | Linux ARM64 (Raspberry Pi 4/5) | [ward-beck-audio-tap-linux-arm64.tar.gz]($dl/ward-beck-audio-tap-linux-arm64.tar.gz) | \`bash install.sh\` |
-          | Windows 10/11 x64 | [ward-beck-audio-tap-windows-x86_64.zip]($dl/ward-beck-audio-tap-windows-x86_64.zip) | right-click \`install.ps1\` > Run with PowerShell |
-          | macOS 14.2+ (Apple silicon and Intel) | [ward-beck-audio-tap-macos-universal.zip]($dl/ward-beck-audio-tap-macos-universal.zip) | \`bash install.sh\` |
+          | Linux (x86_64 and ARM64 / Raspberry Pi 4-5; PipeWire or PulseAudio) | [ward-beck-audio-tap-linux.tar.gz]($dl/ward-beck-audio-tap-linux.tar.gz) | \`bash install.sh\` |
+          | Windows 10/11 x64 (preview) | [ward-beck-audio-tap-windows.zip]($dl/ward-beck-audio-tap-windows.zip) | right-click \`install.ps1\` > Run with PowerShell |
+          | macOS 14.2+ (Apple silicon and Intel, preview) | [ward-beck-audio-tap-macos.zip]($dl/ward-beck-audio-tap-macos.zip) | \`bash install.sh\` |
+
+          Windows and macOS are previews: they run the core (web app API, MXL rings, generators, AES67,
+          SAP/NMOS/PTP/NTP, logging) but do not capture system audio yet.
 
           After installing, open https://ward-beck.ca or https://xtm.wbsps.ca.
           Something wrong? Send the file from http://127.0.0.1:8467/api/diagnostics/bundle

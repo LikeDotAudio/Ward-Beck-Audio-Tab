@@ -17,20 +17,20 @@ Years are written as `YYYY|n`, where n = YYYY − 1967.
 
 ## 0. What the TAP needs from the host
 
-From `Dockerfile`, `docker-compose.yml` and `src/`:
+From `Dockerfile`, `docker-compose.yml` and `core/src/`:
 
 | Need | Where in the code | Linux host | WSL2 |
 |---|---|---|---|
-| A PulseAudio-protocol server on which it can load `module-null-sink` and `module-loopback` | `src/tap.rs` (`WBS_SINKS`, `pactl`) | PipeWire-Pulse or PulseAudio | WSLg's PulseAudio at `/mnt/wslg/PulseServer` |
-| PipeWire (`pw-dump`, `wpctl`) | `src/pipeline.rs`, `src/testpoint.rs` | yes | **no**: WSLg is PulseAudio only, so the PipeWire layer reports absent |
+| A PulseAudio-protocol server on which it can load `module-null-sink` and `module-loopback` | `core/src/tap.rs` (`WBS_SINKS`, `pactl`) | PipeWire-Pulse or PulseAudio | WSLg's PulseAudio at `/mnt/wslg/PulseServer` |
+| PipeWire (`pw-dump`, `wpctl`) | `core/src/pipeline.rs`, `core/src/testpoint.rs` | yes | **no**: WSLg is PulseAudio only, so the PipeWire layer reports absent |
 | `/dev/snd` (ALSA) | `docker-compose.yml` `devices:` | yes | **no**: WSL has no sound card. Remove the device from the compose file, or the container fails to start |
-| `/dev/shm/mxl` | `src/util.rs` `shm_base()` (`WBS_SHM_BASE`) | tmpfs | tmpfs inside the WSL VM. It is shared only with processes in the same VM |
-| HTTP `127.0.0.1:8467` | `src/http.rs` `bind()`. **Hard-coded to 127.0.0.1** | loopback | loopback, forwarded to Windows (see §1.4) |
-| Multicast: SAP 239.255.255.255 / 224.2.127.254 :9875, SIP 224.0.1.75:5060, PTP 224.0.1.129:319/320, mDNS :5353 | `src/aoip.rs` | host network | **only in mirrored mode** (§1.5) |
+| `/dev/shm/mxl` | `core/src/util.rs` `shm_base()` (`WBS_SHM_BASE`) | tmpfs | tmpfs inside the WSL VM. It is shared only with processes in the same VM |
+| HTTP `127.0.0.1:8467` | `core/src/http.rs` `bind()`. **Hard-coded to 127.0.0.1** | loopback | loopback, forwarded to Windows (see §1.4) |
+| Multicast: SAP 239.255.255.255 / 224.2.127.254 :9875, SIP 224.0.1.75:5060, PTP 224.0.1.129:319/320, mDNS :5353 | `core/src/aoip.rs` | host network | **only in mirrored mode** (§1.5) |
 | D-Bus system bus + Avahi | `docker-compose.yml` | yes | only with `systemd=true` in `/etc/wsl.conf` and `avahi-daemon` installed |
-| MQTT 127.0.0.1:1883 (passive PTP) | `src/aoip.rs` | host | same VM, or Windows host in mirrored mode |
+| MQTT 127.0.0.1:1883 (passive PTP) | `core/src/aoip.rs` | host | same VM, or Windows host in mirrored mode |
 
-Consequence for deployment: by default `src/http.rs` binds only `127.0.0.1`, so a published
+Consequence for deployment: by default `core/src/http.rs` binds only `127.0.0.1`, so a published
 port (`-p 8467:8467`) reaches nothing. Set `WBS_BIND=0.0.0.0` in the container and publish it
 as `-p 127.0.0.1:8467:8467` to use bridge networking (the HTTP API only; multicast discovery
 still needs host or mirrored networking). The recipes below use `network_mode: host`.
@@ -79,7 +79,7 @@ To meter Windows desktop audio today:
 
 The audio then reaches the TAP as `RDPSource`. The TAP's microphone guard may flag
 `RDPSource` as a mic input, which is the right call for a real microphone. Check how the
-picker in `src/listen.rs` labels it.
+picker in `core/src/listen.rs` labels it.
 
 ### 1.2 Null sinks, loopbacks and latency
 
@@ -469,7 +469,7 @@ if corporate volume makes per-seat VB-CABLE licences costly.
   - Use `http://127.0.0.1:8467` (§1.4).
   - If XTM is ever embedded in an iframe, the parent must delegate
     `allow="local-network; loopback-network"`.
-- **Server side:** `src/http.rs` already sends `Access-Control-Allow-Origin: *` and
+- **Server side:** `core/src/http.rs` already sends `Access-Control-Allow-Origin: *` and
   `Access-Control-Allow-Private-Network: true`. LNA relies on the permission plus ordinary
   CORS, and says "DO NOT rely on deprecated Private Network Access (PNA) preflight headers".
   The PNA header is harmless and can stay for older browsers. No change is needed for

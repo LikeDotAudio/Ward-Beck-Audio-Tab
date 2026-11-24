@@ -24,15 +24,15 @@ dependencies. The `ward-beck-audio-tab` lib fails with **38 errors**:
 
 | Module | Errors | Cause | Windows fix |
 |---|---:|---|---|
-| `src/mxl.rs` | 13 | `use std::os::unix::io::AsRawFd` (l.19); `libc::posix_fallocate` + `as_raw_fd` (l.687); `libc::kill/pid_t` liveness/terminate (l.1095); `libc::flock` LOCK_UN / LOCK_EX\|LOCK_NB + `as_raw_fd` (l.1127, l.1417); `std::os::unix::fs::symlink` (l.1352) | `File::set_len` only (NTFS needs no fallocate); `std::fs::File::lock/try_lock/unlock` (stable since Rust 1.89, maps to `LockFileEx`); `Child::kill`; directory junction or no alias in place of the symlink |
-| `src/tap.rs` | 13 | `libc::kill/pid_t` (l.620, 950, 954, 1453); `libc::getuid` for `ps -u` (l.1237); `std::os::unix::process::CommandExt::pre_exec` + `libc::setsid` (l.1465-1482); `libc::SIGKILL` (l.1492) | `platform::proc` (`TerminateProcess` via `Child::kill`, `CREATE_NEW_PROCESS_GROUP` creation flag, process list via `sysinfo`/Toolhelp) |
-| `src/aoip/py.rs` | 6 | `libc::ESHUTDOWN` in errno mapping (l.268); `libc::if_nameindex/if_freenameindex/socklen_t/AF_INET/AF_INET6` (l.316-340) | Map `io::ErrorKind` (Windows returns WSA codes such as 10013, not errno); interface list via `GetAdaptersAddresses` (`if-addrs`/`netdev` crate); `ntop` via `std::net` |
-| `src/testpoint.rs` | 5 | `libc::kill/pid_t` (l.366, 448); `Socket::set_reuse_port` (l.613) | `platform::proc`; `#[cfg(unix)]` around `set_reuse_port` (Windows `SO_REUSEADDR` already shares multicast ports) |
-| `src/aoip.rs` | 1 | `Socket::set_reuse_port` (l.1192) | same as above |
+| `core/src/mxl.rs` | 13 | `use std::os::unix::io::AsRawFd` (l.19); `libc::posix_fallocate` + `as_raw_fd` (l.687); `libc::kill/pid_t` liveness/terminate (l.1095); `libc::flock` LOCK_UN / LOCK_EX\|LOCK_NB + `as_raw_fd` (l.1127, l.1417); `std::os::unix::fs::symlink` (l.1352) | `File::set_len` only (NTFS needs no fallocate); `std::fs::File::lock/try_lock/unlock` (stable since Rust 1.89, maps to `LockFileEx`); `Child::kill`; directory junction or no alias in place of the symlink |
+| `core/src/tap.rs` | 13 | `libc::kill/pid_t` (l.620, 950, 954, 1453); `libc::getuid` for `ps -u` (l.1237); `std::os::unix::process::CommandExt::pre_exec` + `libc::setsid` (l.1465-1482); `libc::SIGKILL` (l.1492) | `platform::proc` (`TerminateProcess` via `Child::kill`, `CREATE_NEW_PROCESS_GROUP` creation flag, process list via `sysinfo`/Toolhelp) |
+| `core/src/aoip/py.rs` | 6 | `libc::ESHUTDOWN` in errno mapping (l.268); `libc::if_nameindex/if_freenameindex/socklen_t/AF_INET/AF_INET6` (l.316-340) | Map `io::ErrorKind` (Windows returns WSA codes such as 10013, not errno); interface list via `GetAdaptersAddresses` (`if-addrs`/`netdev` crate); `ntop` via `std::net` |
+| `core/src/testpoint.rs` | 5 | `libc::kill/pid_t` (l.366, 448); `Socket::set_reuse_port` (l.613) | `platform::proc`; `#[cfg(unix)]` around `set_reuse_port` (Windows `SO_REUSEADDR` already shares multicast ports) |
+| `core/src/aoip.rs` | 1 | `Socket::set_reuse_port` (l.1192) | same as above |
 
 There are also errors that are **hidden** because the bin crate is never reached after the lib fails:
 
-- `src/main.rs` uses `signal_hook::iterator::Signals`. That module is `#[cfg(all(not(windows), feature = "iterator"))]`
+- `core/src/main.rs` uses `signal_hook::iterator::Signals`. That module is `#[cfg(all(not(windows), feature = "iterator"))]`
   in signal-hook 0.3.18, so it will not compile on Windows. Use the `ctrlc` crate with the `termination`
   feature, or `SetConsoleCtrlHandler`, plus `windows-service` for service stop.
 - Test code (`#[cfg(test)]`) was not checked. It holds Linux fixture strings but no OS calls.
@@ -225,7 +225,7 @@ doing nothing, and the existing `routes_json()` carries that flag.
 | `http.rs`, `cbc.rs`, `setup.rs`, `lib.rs`, Generators | nothing | entire HTTP API, CBC proxy, setup page |
 
 About 6,500 of the roughly 9,600 lines stay shared unchanged. The `linux.rs` move is mechanical and keeps
-today's behaviour byte-for-byte, which matters because of the pending `src/` change and because existing
+today's behaviour byte-for-byte, which matters because of the pending `core/src/` change and because existing
 tests assert exact `pactl` argument lists.
 
 ### 3.3 New dependencies (Windows only, `[target.'cfg(windows)'.dependencies]`)
@@ -307,4 +307,4 @@ Estimates assume one developer who knows the codebase. Days are working days.
 - `windows-service` crate: https://docs.rs/windows-service/latest/windows_service/
 - WSL networking (mirrored mode, multicast): https://learn.microsoft.com/en-us/windows/wsl/networking
 - WSLg architecture (PulseAudio server): https://devblogs.microsoft.com/commandline/wslg-architecture
-- signal-hook `iterator` cfg: signal-hook 0.3.18 `src/lib.rs` l.352 (`#[cfg(all(not(windows), feature = "iterator"))]`)
+- signal-hook `iterator` cfg: signal-hook 0.3.18 `core/src/lib.rs` l.352 (`#[cfg(all(not(windows), feature = "iterator"))]`)

@@ -13,25 +13,33 @@ It allows Linux users to route desktop audio, YouTube, Spotify, DAWs, and media 
 
 ## ⬇️ Downloads
 
-| System | Latest release | Newest build (nightly) | Install |
+| Build | Download | Newest build | How to install |
 |---|---|---|---|
-| Linux x86_64 | [tar.gz](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-linux-x86_64.tar.gz) | [tar.gz](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/download/nightly/ward-beck-audio-tap-linux-x86_64.tar.gz) | `bash install.sh` |
-| Linux ARM64 (Raspberry Pi 4/5) | [tar.gz](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-linux-arm64.tar.gz) | [tar.gz](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/download/nightly/ward-beck-audio-tap-linux-arm64.tar.gz) | `bash install.sh` |
-| Windows 10/11 x64 | [zip](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-windows-x86_64.zip) | [zip](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/download/nightly/ward-beck-audio-tap-windows-x86_64.zip) | right-click `install.ps1` › Run with PowerShell |
-| macOS 14.2+ (Apple silicon + Intel) | [zip](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-macos-universal.zip) | [zip](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/download/nightly/ward-beck-audio-tap-macos-universal.zip) | `bash install.sh` |
+| **Linux** (x86_64 + ARM64) | [ward-beck-audio-tap-linux.tar.gz](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-linux.tar.gz) | [nightly](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/download/nightly/ward-beck-audio-tap-linux.tar.gz) | [linux/README.md](linux/README.md) |
+| **Windows** 10/11 x64 (preview) | [ward-beck-audio-tap-windows.zip](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-windows.zip) | [nightly](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/download/nightly/ward-beck-audio-tap-windows.zip) | [windows/README.md](windows/README.md) |
+| **macOS** 14.2+ universal (preview) | [ward-beck-audio-tap-macos.zip](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-macos.zip) | [nightly](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/download/nightly/ward-beck-audio-tap-macos.zip) | [macos/README.md](macos/README.md) |
 
-All releases: <https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases>. Builds come from
-[`.github/workflows/release.yml`](.github/workflows/release.yml): every push to `main` refreshes *nightly*,
-every `v*` tag makes a release.
+All releases: <https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases>. Every push to `main` refreshes *nightly*; every `v*` tag makes a release
+([`.github/workflows/release.yml`](.github/workflows/release.yml)).
 
-> **Windows and macOS are in progress.** They install, run, serve the web app's API, MXL rings,
-> generators, AES67, SAP/NMOS/PTP/NTP and log everything, but system-audio capture
-> (WASAPI loopback / Core Audio process tap) is still being written.
+> **Windows and macOS are previews.** They run the core (web app API, MXL rings, generators, AES67,
+> SAP/NMOS/PTP/NTP, logging); system-audio capture (WASAPI loopback / Core Audio process tap) is
+> still being written.
 
-**Something wrong?** Every Tap logs what it does. Send the file from
-<http://127.0.0.1:8467/api/diagnostics/bundle> (report + recent problems + log). Log files:
-Linux `~/.local/state/ward-beck-audio-tap/tap.log`, macOS `~/Library/Logs/Ward-Beck Audio Tap/tap.log`,
-Windows `%LOCALAPPDATA%\Ward-Beck\Audio Tap\logs\tap.log`.
+**Something wrong?** Send the file from <http://127.0.0.1:8467/api/diagnostics/bundle>.
+
+## 🗂️ Layout: one core, three builds
+
+| Folder | What |
+|---|---|
+| [`core/`](core) | The Tap itself (Rust crate `ward-beck-audio-tab`): HTTP API, MXL engine, generators, AES67, SAP/NMOS/PTP/NTP, logging — shared by every OS |
+| [`linux/`](linux) | PipeWire / PulseAudio build: `install.sh`, systemd user service, `run.sh`, Docker image |
+| [`windows/`](windows) | Windows build: `install.ps1` (per user, starts at sign-in) |
+| [`macos/`](macos) | macOS build: `install.sh` (LaunchAgent) |
+| `Generators/`, `PTP/` | submodules the core builds in (Ward-Beck Generators, the APK PTP sniffer) |
+
+Build from source anywhere: `git submodule update --init Generators PTP && cargo build --release`
+(the binary lands in `target/release/`).
 
 ---
 
@@ -69,11 +77,11 @@ Windows `%LOCALAPPDATA%\Ward-Beck\Audio Tap\logs\tap.log`.
 > Docker, native Linux packaging and Windows: see **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
 ### Option A: Direct Run
-One native binary, written in Rust. `run.sh` builds it on first use (needs [cargo](https://rustup.rs)). The generators come from the [Ward-Beck Generators](https://github.com/LikeDotAudio/Ward-Beck-Generators) submodule, so clone with `--recursive` (run.sh fetches it if you forgot):
+One native binary, written in Rust. `linux/run.sh` builds it on first use (needs [cargo](https://rustup.rs)). The generators come from the [Ward-Beck Generators](https://github.com/LikeDotAudio/Ward-Beck-Generators) submodule, so clone with `--recursive` (linux/run.sh fetches it if you forgot):
 ```bash
 git clone --recursive https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap.git && cd Ward-Beck-Audio-Tap
-./run.sh                 # = cargo build --release && target/release/ward-beck-audio-tab
-./run.sh --no-browser    # headless; also --check (self-test) and --abandon (teardown)
+linux/run.sh             # = cargo build --release && target/release/ward-beck-audio-tab
+linux/run.sh --no-browser # headless; also --check (self-test) and --abandon (teardown)
 ```
 Then open your web browser to **https://ward-beck.ca** (or [xtm.wbsps.ca](https://xtm.wbsps.ca)) to view the live broadcast visualizer, or **http://127.0.0.1:8467** to inspect the local telemetry dashboard.
 
@@ -82,7 +90,7 @@ In **XTM-4** ([xtm.wbsps.ca](https://xtm.wbsps.ca)), open the Settings Drawer (t
 
 ### Option B: 1-Step Installation (systemd User Service)
 ```bash
-./install.sh
+linux/install.sh
 ```
 This installs `ward-beck-audio-tab` to `~/.local/bin/` and registers a systemd user service that automatically starts with your desktop session.
 
@@ -137,15 +145,15 @@ The daemon provides a CORS-enabled HTTP server on port `8467`:
 
 | Module | Role |
 |---|---|
-| `src/tap.rs` | Virtual buses and routes, source list and per-source meters, test tone, Bit Buddy, Reset All |
-| `src/http.rs` | HTTP API and UI on `:8467` (SSE meter stream, binary `/pcm` flow audio) |
-| `src/mxl.rs` | EBU DMF / MXL shared-memory domains and flow rings in `/dev/shm/mxl`, Ward-Beck Test Signals domain |
-| `src/testpoint.rs` | One test point at a time (ALSA / PipeWire / MXL / AES67 RTP) with its own ring and meters |
-| `src/aoip.rs` | SAP/SDP, PTP, SIP multicast listeners and passive PTP over MQTT |
-| `src/pipeline.rs` | ALSA → PipeWire → MXL → AoIP layer report |
-| `src/listen.rs` | "What should the meters hear?" picker |
-| `src/cbc.rs`, `src/nmos.rs` | CBC / Radio-Canada MXL test-set proxy, NMOS IS-04 / AoIP discovery |
-| `web/` | The dashboard (`/`) and setup guide (`/setup`) pages, compiled into the binary |
+| `core/src/tap.rs` | Virtual buses and routes, source list and per-source meters, test tone, Bit Buddy, Reset All |
+| `core/src/http.rs` | HTTP API and UI on `:8467` (SSE meter stream, binary `/pcm` flow audio) |
+| `core/src/mxl.rs` | EBU DMF / MXL shared-memory domains and flow rings in `/dev/shm/mxl`, Ward-Beck Test Signals domain |
+| `core/src/testpoint.rs` | One test point at a time (ALSA / PipeWire / MXL / AES67 RTP) with its own ring and meters |
+| `core/src/aoip.rs` | SAP/SDP, PTP, SIP multicast listeners and passive PTP over MQTT |
+| `core/src/pipeline.rs` | ALSA → PipeWire → MXL → AoIP layer report |
+| `core/src/listen.rs` | "What should the meters hear?" picker |
+| `core/src/cbc.rs`, `core/src/nmos.rs` | CBC / Radio-Canada MXL test-set proxy, NMOS IS-04 / AoIP discovery |
+| `core/web/` | The dashboard (`/`) and setup guide (`/setup`) pages, compiled into the binary |
 
 `cargo test --lib` runs the unit tests. For side-by-side testing next to a running daemon:
 `WBS_PORT=18467 WBS_SHM_BASE=/tmp/mxl-test WBS_DRY_RUN=1 target/release/ward-beck-audio-tab --no-browser`

@@ -9,7 +9,7 @@
 #   docker compose logs -f tap
 #
 # Add the CBC / Radio-Canada MXL test set alongside it:
-#   ./start-mxl-demo.sh            # or: docker compose -f docker-compose.mxl-demo.yml up -d
+#   ../start-mxl-demo.sh           # or: docker compose -f ../docker-compose.mxl-demo.yml up -d
 #
 # Full instructions: docs/deploy/linux-docker.md, or http://127.0.0.1:8467/setup once running.
 
@@ -20,7 +20,9 @@ services:
     image: ghcr.io/wardbecksystems/ward-beck-audio-tap:latest
     # Pull the published image when it is not present locally; `--build` builds this checkout.
     pull_policy: missing
-    build: .
+    build:
+      context: ..
+      dockerfile: linux/Dockerfile
     container_name: wbs-tap
     restart: unless-stopped
     # Multicast (SAP 239.255.255.255:9875, SIP 224.0.1.75:5060), MQTT on 127.0.0.1:1883

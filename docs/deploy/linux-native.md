@@ -7,7 +7,7 @@ how to package it, how to run it under systemd, and how to lock it down. Docker 
 separately in [linux-docker.md](linux-docker.md).
 
 The code was audited from the working tree. That includes the uncommitted client-watchdog
-change in `src/tap.rs`, `src/http.rs` and `src/main.rs`. Line numbers refer to that tree.
+change in `core/src/tap.rs`, `core/src/http.rs` and `core/src/main.rs`. Line numbers refer to that tree.
 
 **Short answer**
 
@@ -31,11 +31,11 @@ change in `src/tap.rs`, `src/http.rs` and `src/main.rs`. Line numbers refer to t
 ### 1.1 External commands
 
 Every external program is started with `std::process::Command`. A shell is never used. The
-programs are found on `PATH` (see `which`, `src/util.rs:76`). There are three helpers:
+programs are found on `PATH` (see `which`, `core/src/util.rs:76`). There are three helpers:
 
-- `tap::run_cmd`: 2.5 s timeout, `src/tap.rs:555`.
-- `run_mut`: does nothing under `WBS_DRY_RUN=1`, `src/tap.rs:608`.
-- `util::run_cmd_full`: caller's timeout, `src/util.rs:40`.
+- `tap::run_cmd`: 2.5 s timeout, `core/src/tap.rs:555`.
+- `run_mut`: does nothing under `WBS_DRY_RUN=1`, `core/src/tap.rs:608`.
+- `util::run_cmd_full`: caller's timeout, `core/src/util.rs:40`.
 
 | Command | Where (file:line) | What for | Required? | Debian / Ubuntu / RPi OS | Fedora | Arch |
 |---|---|---|---|---|---|---|
