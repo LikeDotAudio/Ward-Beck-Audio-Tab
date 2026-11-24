@@ -1,0 +1,9 @@
+[package]
+name = "wbs-net"
+description = "Network helpers: host address, SDP / SAP parsing, RFC 7273 clock references"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]

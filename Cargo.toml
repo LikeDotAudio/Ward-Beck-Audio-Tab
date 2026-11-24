@@ -1,18 +1,62 @@
 # Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
-# Ward-Beck Audio Tap: one core, three build types.
+# Ward-Beck Audio Tap: a host, a plugin contract, one crate per application and per utility,
+# and three build types.
 #
-#   core/     the Tap itself (Rust crate ward-beck-audio-tab): HTTP API, MXL engine,
-#             generators, AES67, SAP/NMOS/PTP/NTP, logging - shared by every OS
-#   linux/    PipeWire / PulseAudio build: install.sh, systemd user service, Docker image
-#   windows/  Windows build: install.ps1 (per-user, starts at sign-in)
-#   macos/    macOS build: install.sh (LaunchAgent)
+#   host/        the binary (ward-beck-audio-tab): HTTP server on :8467, plugin registry, main
+#   plugin/      the contract every application plugs into: routes, start-up, and the
+#                services one application offers the others (no application uses another directly)
+#   apps/<name>/ one crate per application (mxl, patchbay, receivers, aoip, aes67, ntp, ...)
+#   utils/<name>/ one crate per utility (log, sys, common, pyshim, net)
+#   linux/ windows/ macos/   the three build types (installers, services, Docker)
 #
-# `cargo build --release` here builds core/ into target/release/.
+# `cargo build --release` here builds the host into target/release/ward-beck-audio-tab.
 [workspace]
-members = ["core"]
+members = ["host", "plugin", "apps/*", "utils/*"]
 # Submodule crates keep their own workspaces and tests.
 exclude = ["PTP", "Generators", "mxl-hands-on"]
 resolver = "2"
+
+[workspace.package]
+version = "2.2.0"
+edition = "2021"
+license-file = "LICENSE"
+publish = false
+
+[workspace.dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+tiny_http = "0.12"
+memmap2 = "0.9"
+socket2 = { version = "0.5", features = ["all"] }
+libc = "0.2"
+signal-hook = "0.3"
+ureq = { version = "2", default-features = false }
+wbs-generators = { path = "Generators/rust" }
+# The APK PTP sniffer (PTPv1 + PTPv2 + gPTP, UDP 319/320 + raw Ethernet), submodule PTP/.
+apkaudio-ptp = { path = "PTP/SRC", default-features = false }
+apkaudio-maclookup = { git = "https://github.com/LikeDotAudio/APK.plugin.protocol.MAC_LOOKUP", tag = "maclookup-v2.5.0" }
+# utilities
+wbs-log = { path = "utils/log" }
+wbs-sys = { path = "utils/sys" }
+wbs-common = { path = "utils/common" }
+wbs-pyshim = { path = "utils/pyshim" }
+wbs-net = { path = "utils/net" }
+# the contract
+wbs-plugin = { path = "plugin" }
+# applications
+wbs-mxl = { path = "apps/mxl" }
+wbs-patchbay = { path = "apps/patchbay" }
+wbs-receivers = { path = "apps/receivers" }
+wbs-aoip = { path = "apps/aoip", default-features = false }
+wbs-aes67 = { path = "apps/aes67" }
+wbs-ntp = { path = "apps/ntp" }
+wbs-hardware = { path = "apps/hardware" }
+wbs-nmos = { path = "apps/nmos" }
+wbs-cbc = { path = "apps/cbc" }
+wbs-pipeline = { path = "apps/pipeline" }
+wbs-listen = { path = "apps/listen" }
+wbs-diagnostics = { path = "apps/diagnostics" }
+wbs-setup = { path = "apps/setup" }
+
 [profile.release]
 opt-level = 3
 lto = "thin"

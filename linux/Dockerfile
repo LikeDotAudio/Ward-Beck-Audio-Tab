@@ -15,13 +15,16 @@ FROM rust:1-slim-bookworm AS build
 WORKDIR /src
 # The crate depends on Generators/rust (path dependency, crate wbs-generators),
 # whose license-file is Generators/LICENSE.
-# Build context is the repo root: the workspace, the core crate and its two submodule crates.
+# Build context is the repo root: the workspace (host, plugin, apps, utils) and its two submodule crates.
 COPY Cargo.toml Cargo.lock LICENSE ./
 COPY Generators/LICENSE ./Generators/LICENSE
 COPY Generators/rust ./Generators/rust
 # The APK PTP sniffer (path dependency apkaudio-ptp).
 COPY PTP/SRC ./PTP/SRC
-COPY core ./core
+COPY host ./host
+COPY plugin ./plugin
+COPY apps ./apps
+COPY utils ./utils
 RUN cargo build --release --locked \
  && strip target/release/ward-beck-audio-tab
 

@@ -14,7 +14,7 @@ echo " Installing Ward-Beck Audio Tab"
 echo "===================================================================="
 
 # 1. The executable: the prebuilt one for this CPU from a release download, else built
-#    from the core/ source (Rust; needs cargo: https://rustup.rs).
+#    from the source (Rust workspace: host/, plugin/, apps/, utils/; needs cargo: https://rustup.rs).
 case "$(uname -m)" in
   x86_64|amd64) ARCH=x86_64 ;;
   aarch64|arm64) ARCH=arm64 ;;
@@ -23,7 +23,7 @@ esac
 if [ -f "$HERE/ward-beck-audio-tab-$ARCH" ]; then
   BIN_SRC="$HERE/ward-beck-audio-tab-$ARCH"
   echo "• Using the prebuilt $ARCH binary from this download"
-elif [ -f "$ROOT/core/Cargo.toml" ]; then
+elif [ -f "$ROOT/host/Cargo.toml" ]; then
   command -v cargo >/dev/null || { echo "✘ cargo not found. Install Rust first: https://rustup.rs"; exit 1; }
   [ -f "$ROOT/Generators/rust/Cargo.toml" ] && [ -f "$ROOT/PTP/SRC/Cargo.toml" ] || git -C "$ROOT" submodule update --init Generators PTP
   cargo build --release --manifest-path "$ROOT/Cargo.toml"

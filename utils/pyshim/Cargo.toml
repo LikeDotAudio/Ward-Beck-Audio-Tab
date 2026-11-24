@@ -1,0 +1,12 @@
+[package]
+name = "wbs-pyshim"
+description = "Python-compatible helpers: json.dumps, str(), round(), errno/socket mapping"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+libc.workspace = true
+wbs-sys.workspace = true

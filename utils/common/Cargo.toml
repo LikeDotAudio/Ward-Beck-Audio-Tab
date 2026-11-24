@@ -1,0 +1,10 @@
+[package]
+name = "wbs-common"
+description = "Shared helpers: commands, time, shutdown flag, PCM chunks, the state lock"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+wbs-log.workspace = true

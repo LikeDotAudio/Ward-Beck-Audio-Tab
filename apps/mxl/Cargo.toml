@@ -1,0 +1,19 @@
+[package]
+name = "wbs-mxl"
+description = "MXL / EBU DMF shared-memory engine: domains, flows and rings"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+libc.workspace = true
+memmap2.workspace = true
+wbs-generators.workspace = true
+wbs-common.workspace = true
+wbs-sys.workspace = true
+wbs-log.workspace = true
+wbs-net.workspace = true
+wbs-plugin.workspace = true
+wbs-pyshim.workspace = true

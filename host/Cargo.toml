@@ -1,0 +1,38 @@
+[package]
+name = "ward-beck-audio-tab"
+description = "WARD BECK TAP: the host. HTTP API on :8467 and the plugin registry every application plugs into"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ward-beck-audio-tab"
+path = "src/main.rs"
+
+[dependencies]
+serde_json.workspace = true
+tiny_http.workspace = true
+signal-hook.workspace = true
+wbs-log.workspace = true
+wbs-common.workspace = true
+wbs-pyshim.workspace = true
+wbs-plugin.workspace = true
+wbs-mxl.workspace = true
+wbs-patchbay.workspace = true
+wbs-receivers.workspace = true
+wbs-aoip.workspace = true
+wbs-aes67.workspace = true
+wbs-ntp.workspace = true
+wbs-hardware.workspace = true
+wbs-nmos.workspace = true
+wbs-cbc.workspace = true
+wbs-pipeline.workspace = true
+wbs-listen.workspace = true
+wbs-diagnostics.workspace = true
+wbs-setup.workspace = true
+
+[features]
+# Vendor names for PTP clocks (see apps/aoip).
+default = ["vendors"]
+vendors = ["wbs-aoip/vendors"]

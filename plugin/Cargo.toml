@@ -1,0 +1,13 @@
+[package]
+name = "wbs-plugin"
+description = "The plugin contract: routes, start-up and the services applications offer each other"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+wbs-log.workspace = true
+serde_json.workspace = true
+wbs-pyshim.workspace = true
+wbs-common.workspace = true

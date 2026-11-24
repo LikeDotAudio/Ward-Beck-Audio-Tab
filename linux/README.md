@@ -13,7 +13,7 @@ bash install.sh        # installs ~/.local/bin/ward-beck-audio-tab and a systemd
 ```
 
 `install.sh` picks the binary for this CPU, starts the Tap at login, and asks once (sudo) for the
-two capabilities PTP listening needs. From a git checkout it builds `core/` instead.
+two capabilities PTP listening needs. From a git checkout it builds the workspace (`host/`, `apps/`, `utils/`) instead.
 
 | | |
 |---|---|

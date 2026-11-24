@@ -28,15 +28,18 @@ All releases: <https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases>.
 
 **Something wrong?** Send the file from <http://127.0.0.1:8467/api/diagnostics/bundle>.
 
-## 🗂️ Layout: one core, three builds
+## 🗂️ Layout: a host, plug-in applications, utilities, three builds
 
 | Folder | What |
 |---|---|
-| [`core/`](core) | The Tap itself (Rust crate `ward-beck-audio-tab`): HTTP API, MXL engine, generators, AES67, SAP/NMOS/PTP/NTP, logging — shared by every OS |
+| [`host/`](host) | The binary (`ward-beck-audio-tab`): HTTP server on `:8467`, plugs every application in |
+| [`plugin/`](plugin) | The contract every application plugs into: routes, start-up, and the services they offer each other |
+| [`apps/`](apps) | One crate per application (table below) — no application uses another directly |
+| [`utils/`](utils) | One crate per utility: `log`, `sys` (Linux / Windows / macOS), `common`, `pyshim`, `net` |
 | [`linux/`](linux) | PipeWire / PulseAudio build: `install.sh`, systemd user service, `run.sh`, Docker image |
 | [`windows/`](windows) | Windows build: `install.ps1` (per user, starts at sign-in) |
 | [`macos/`](macos) | macOS build: `install.sh` (LaunchAgent) |
-| `Generators/`, `PTP/` | submodules the core builds in (Ward-Beck Generators, the APK PTP sniffer) |
+| `Generators/`, `PTP/` | submodules the workspace builds in (Ward-Beck Generators, the APK PTP sniffer) |
 
 Build from source anywhere: `git submodule update --init Generators PTP && cargo build --release`
 (the binary lands in `target/release/`).
@@ -143,19 +146,30 @@ The daemon provides a CORS-enabled HTTP server on port `8467`:
 
 ## 🦀 Source Layout
 
-| Module | Role |
-|---|---|
-| `core/src/tap.rs` | Virtual buses and routes, source list and per-source meters, test tone, Bit Buddy, Reset All |
-| `core/src/http.rs` | HTTP API and UI on `:8467` (SSE meter stream, binary `/pcm` flow audio) |
-| `core/src/mxl.rs` | EBU DMF / MXL shared-memory domains and flow rings in `/dev/shm/mxl`, Ward-Beck Test Signals domain |
-| `core/src/testpoint.rs` | One test point at a time (ALSA / PipeWire / MXL / AES67 RTP) with its own ring and meters |
-| `core/src/aoip.rs` | SAP/SDP, PTP, SIP multicast listeners and passive PTP over MQTT |
-| `core/src/pipeline.rs` | ALSA → PipeWire → MXL → AoIP layer report |
-| `core/src/listen.rs` | "What should the meters hear?" picker |
-| `core/src/cbc.rs`, `core/src/nmos.rs` | CBC / Radio-Canada MXL test-set proxy, NMOS IS-04 / AoIP discovery |
-| `core/web/` | The dashboard (`/`) and setup guide (`/setup`) pages, compiled into the binary |
+Every application is its own crate under `apps/` and depends only on `plugin/` and `utils/`. It
+plugs into the host with `plug()`: its HTTP routes, its start-up work, and the service it offers
+the others (`wbs_plugin::services::mxl()`, `aoip()`, `patchbay()`, ...). A service nobody provides
+answers with an inert default, so any application can be left out of a build.
 
-`cargo test --lib` runs the unit tests. For side-by-side testing next to a running daemon:
+| Application | Routes | Offers |
+|---|---|---|
+| `apps/patchbay` | `/api/status`, sources, routes, test tone, Bit Buddy, Reset All, restart | the TAP buses, sources and meters |
+| `apps/mxl` | `/api/mxl*` (rings, waveform, binary `/pcm`, levels, slice) | the MXL / EBU DMF shared-memory data plane |
+| `apps/receivers` | `/api/testpoint`, `/api/receiver` | the test point and the network / MoIP receivers |
+| `apps/aoip` | `/api/aoip*` | SAP / SDP, SIP, the PTP sniffer and the PTP leader |
+| `apps/aes67` | `/api/aes67` | AES67 transmitters (RTP + SAP per flow) |
+| `apps/hardware` | `/api/hw` | HW 1 / HW 2 and hardware inputs to the sound cards |
+| `apps/ntp` | `/api/ntp` | NTP status, configuration and the log of answers |
+| `apps/nmos` | `/api/nmos` | NMOS IS-04 / AoIP device discovery |
+| `apps/pipeline` | `/api/pipeline*` | the ALSA → PipeWire → MXL → AoIP report |
+| `apps/listen` | `/api/listen` | "What should the meters hear?" picker |
+| `apps/cbc` | `/api/cbc/*` | CBC / Radio-Canada MXL test-set proxy |
+| `apps/diagnostics` | `/api/diagnostics*`, `/api/log` | the report and bundle a tester sends |
+| `apps/setup` | `/setup` | the deployment guide page |
+
+The host keeps only the transport: the dashboard (`/`, `host/web/`), the SSE meter stream and shutdown.
+
+`cargo test` runs every crate's unit tests. For side-by-side testing next to a running daemon:
 `WBS_PORT=18467 WBS_SHM_BASE=/tmp/mxl-test WBS_DRY_RUN=1 target/release/ward-beck-audio-tab --no-browser`
 (dry run skips every change to the live audio graph).
 

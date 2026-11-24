@@ -1,0 +1,10 @@
+[package]
+name = "wbs-setup"
+description = "The /setup deployment guide page"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+wbs-plugin.workspace = true

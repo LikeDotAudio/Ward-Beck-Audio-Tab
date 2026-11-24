@@ -671,18 +671,28 @@ checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
 
 [[package]]
 name = "ward-beck-audio-tab"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
- "apkaudio-maclookup",
- "apkaudio-ptp",
- "libc",
- "memmap2",
  "serde_json",
  "signal-hook",
- "socket2 0.5.10",
  "tiny_http",
- "ureq",
- "wbs-generators",
+ "wbs-aes67",
+ "wbs-aoip",
+ "wbs-cbc",
+ "wbs-common",
+ "wbs-diagnostics",
+ "wbs-hardware",
+ "wbs-listen",
+ "wbs-log",
+ "wbs-mxl",
+ "wbs-nmos",
+ "wbs-ntp",
+ "wbs-patchbay",
+ "wbs-pipeline",
+ "wbs-plugin",
+ "wbs-pyshim",
+ "wbs-receivers",
+ "wbs-setup",
 ]
 
 [[package]]
@@ -692,8 +702,211 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
+name = "wbs-aes67"
+version = "2.2.0"
+dependencies = [
+ "serde_json",
+ "socket2 0.5.10",
+ "wbs-aoip",
+ "wbs-common",
+ "wbs-log",
+ "wbs-net",
+ "wbs-plugin",
+ "wbs-pyshim",
+]
+
+[[package]]
+name = "wbs-aoip"
+version = "2.2.0"
+dependencies = [
+ "apkaudio-maclookup",
+ "apkaudio-ptp",
+ "libc",
+ "serde_json",
+ "socket2 0.5.10",
+ "wbs-common",
+ "wbs-log",
+ "wbs-net",
+ "wbs-plugin",
+ "wbs-pyshim",
+ "wbs-sys",
+]
+
+[[package]]
+name = "wbs-cbc"
+version = "2.2.0"
+dependencies = [
+ "serde_json",
+ "ureq",
+ "wbs-common",
+ "wbs-log",
+ "wbs-plugin",
+ "wbs-pyshim",
+]
+
+[[package]]
+name = "wbs-common"
+version = "2.2.0"
+dependencies = [
+ "wbs-log",
+]
+
+[[package]]
+name = "wbs-diagnostics"
+version = "2.2.0"
+dependencies = [
+ "serde_json",
+ "wbs-common",
+ "wbs-log",
+ "wbs-plugin",
+ "wbs-pyshim",
+]
+
+[[package]]
 name = "wbs-generators"
 version = "1.0.0"
+
+[[package]]
+name = "wbs-hardware"
+version = "2.2.0"
+dependencies = [
+ "serde_json",
+ "wbs-common",
+ "wbs-log",
+ "wbs-plugin",
+ "wbs-pyshim",
+]
+
+[[package]]
+name = "wbs-listen"
+version = "2.2.0"
+dependencies = [
+ "serde_json",
+ "wbs-common",
+ "wbs-log",
+ "wbs-plugin",
+ "wbs-pyshim",
+]
+
+[[package]]
+name = "wbs-log"
+version = "2.2.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "wbs-mxl"
+version = "2.2.0"
+dependencies = [
+ "libc",
+ "memmap2",
+ "serde_json",
+ "wbs-common",
+ "wbs-generators",
+ "wbs-log",
+ "wbs-net",
+ "wbs-plugin",
+ "wbs-pyshim",
+ "wbs-sys",
+]
+
+[[package]]
+name = "wbs-net"
+version = "2.2.0"
+
+[[package]]
+name = "wbs-nmos"
+version = "2.2.0"
+dependencies = [
+ "serde_json",
+ "wbs-common",
+ "wbs-log",
+ "wbs-plugin",
+ "wbs-pyshim",
+]
+
+[[package]]
+name = "wbs-ntp"
+version = "2.2.0"
+dependencies = [
+ "serde_json",
+ "wbs-common",
+ "wbs-log",
+ "wbs-plugin",
+ "wbs-pyshim",
+]
+
+[[package]]
+name = "wbs-patchbay"
+version = "2.2.0"
+dependencies = [
+ "serde_json",
+ "wbs-common",
+ "wbs-log",
+ "wbs-plugin",
+ "wbs-pyshim",
+ "wbs-sys",
+]
+
+[[package]]
+name = "wbs-pipeline"
+version = "2.2.0"
+dependencies = [
+ "serde_json",
+ "wbs-common",
+ "wbs-log",
+ "wbs-plugin",
+ "wbs-pyshim",
+]
+
+[[package]]
+name = "wbs-plugin"
+version = "2.2.0"
+dependencies = [
+ "serde_json",
+ "wbs-common",
+ "wbs-log",
+ "wbs-pyshim",
+]
+
+[[package]]
+name = "wbs-pyshim"
+version = "2.2.0"
+dependencies = [
+ "libc",
+ "serde_json",
+ "wbs-sys",
+]
+
+[[package]]
+name = "wbs-receivers"
+version = "2.2.0"
+dependencies = [
+ "serde_json",
+ "socket2 0.5.10",
+ "wbs-common",
+ "wbs-log",
+ "wbs-plugin",
+ "wbs-pyshim",
+ "wbs-sys",
+]
+
+[[package]]
+name = "wbs-setup"
+version = "2.2.0"
+dependencies = [
+ "wbs-plugin",
+]
+
+[[package]]
+name = "wbs-sys"
+version = "2.2.0"
+dependencies = [
+ "apkaudio-ptp",
+ "libc",
+ "socket2 0.5.10",
+]
 
 [[package]]
 name = "webpki-roots"

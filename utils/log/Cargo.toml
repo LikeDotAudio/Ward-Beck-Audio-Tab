@@ -1,0 +1,10 @@
+[package]
+name = "wbs-log"
+description = "Logging: console, rotating file, in-memory tail, client tracking"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
