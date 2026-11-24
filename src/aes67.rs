@@ -76,7 +76,16 @@ fn fnv(s: &str) -> u32 {
 }
 
 /// SDP (RFC 4566 + AES67 / RFC 7273 clock attributes) for one transmitter.
-pub fn sdp(flow_id: &str, label: &str, group: Ipv4Addr, channels: usize, sample_rate: u32) -> String {
+/// RFC 7273 reference clock: the PTP leader (grandmaster identity and domain) when one
+/// is heard, else "traceable".
+pub fn refclk(leader: Option<(String, i64)>) -> String {
+    match leader {
+        Some((gm, domain)) => format!("ptp=IEEE1588-2008:{}:{domain}", gm.to_uppercase().replace(':', "-")),
+        None => "ptp=IEEE1588-2008:traceable".into(),
+    }
+}
+
+pub fn sdp(flow_id: &str, label: &str, group: Ipv4Addr, channels: usize, sample_rate: u32, refclk: &str) -> String {
     let host = host_v4();
     let sess = fnv(flow_id);
     let (port, ttl) = (port(), ttl());
@@ -93,7 +102,7 @@ pub fn sdp(flow_id: &str, label: &str, group: Ipv4Addr, channels: usize, sample_
          a=ptime:1\r\n\
          a=maxptime:1\r\n\
          a=source-filter: incl IN IP4 {group} {host}\r\n\
-         a=ts-refclk:ptp=IEEE1588-2008:traceable\r\n\
+         a=ts-refclk:{refclk}\r\n\
          a=mediaclk:direct=0\r\n"
     )
 }
@@ -159,7 +168,7 @@ struct Tx {
 
 impl Tx {
     fn sdp(&self) -> String {
-        sdp(&self.flow_id, &self.label, self.group, self.channels, self.sample_rate)
+        sdp(&self.flow_id, &self.label, self.group, self.channels, self.sample_rate, &refclk(crate::aoip::ptp_leader()))
     }
 
     fn json(&self) -> Value {
@@ -518,7 +527,7 @@ mod tests {
         assert_eq!(p[1], 0);
         assert!(p.windows(16).any(|w| w == b"application/sdp\0"));
         assert_eq!(sap_packet("f", "", true)[0], 0x24);
-        let parsed = crate::aoip::parse_sap(&sap_packet("f", &sdp("f", "Master", Ipv4Addr::new(239, 69, 1, 1), 2, 48000), false)).unwrap();
+        let parsed = crate::aoip::parse_sap(&sap_packet("f", &sdp("f", "Master", Ipv4Addr::new(239, 69, 1, 1), 2, 48000, &refclk(None)), false)).unwrap();
         assert_eq!(parsed["sdp"]["multicast_ip"], "239.69.1.1");
         assert_eq!(parsed["sdp"]["port"], 5004);
     }

@@ -1515,6 +1515,30 @@ pub fn start(stop: Arc<AtomicBool>) {
     }
 }
 
+/// The PTP leader an AES67 sender should name: a PTPv2 grandmaster (not gPTP, not
+/// Dante PTPv1), AES67/RAVENNA networks first, then the best priority1, then domain.
+pub fn pick_ptp_leader(gms: &Value) -> Option<(String, i64)> {
+    let mut v2: Vec<&Value> = gms
+        .as_array()?
+        .iter()
+        .filter(|g| g["version"].as_i64() == Some(2) && g["domain"].is_i64() && g["network"] != "avb (gPTP)")
+        .filter(|g| g["identity"].as_str().is_some_and(|s| !s.is_empty()))
+        .collect();
+    v2.sort_by_key(|g| {
+        (
+            !g["network"].as_str().unwrap_or("").contains("aes67"),
+            g["priority1"].as_i64().unwrap_or(255),
+            g["domain"].as_i64().unwrap_or(0),
+        )
+    });
+    v2.first().map(|g| (g["identity"].as_str().unwrap_or("").to_string(), g["domain"].as_i64().unwrap_or(0)))
+}
+
+/// The PTP leader heard right now, if any.
+pub fn ptp_leader() -> Option<(String, i64)> {
+    pick_ptp_leader(&snapshot()["ptp"]["grandmasters"])
+}
+
 /// Thread-safe JSON-ready view of everything heard on the multicast groups.
 pub fn snapshot() -> Value {
     let now = now_f64();
@@ -1897,6 +1921,22 @@ mod tests {
         assert_eq!(sn["sap"]["groups"], json!(["239.255.255.255:9875", "224.2.127.254:9875"]));
         assert_eq!(sn["ptp"]["groups"], json!(["224.0.1.129:319", "224.0.1.129:320"]));
         assert_eq!(sn["sip"]["groups"], json!(["224.0.1.75:5060"]));
+    }
+
+    #[test]
+    fn the_ptp_leader_is_an_aes67_v2_grandmaster() {
+        let gms = json!([
+            {"version": 1, "domain": "_DFLT", "network": "dante", "identity": "00-1d-c1-ff-fe-00-00-01", "priority1": 0},
+            {"version": 2, "domain": 0, "network": "avb (gPTP)", "identity": "00-1d-c1-ff-fe-00-00-02", "priority1": 0},
+            {"version": 2, "domain": 1, "network": "dante", "identity": "00-1d-c1-ff-fe-00-00-03", "priority1": 10},
+            {"version": 2, "domain": 0, "network": "aes67", "identity": "00-0a-92-ff-fe-02-77-5b", "priority1": 128}
+        ]);
+        assert_eq!(pick_ptp_leader(&gms), Some(("00-0a-92-ff-fe-02-77-5b".into(), 0)));
+        assert_eq!(pick_ptp_leader(&json!([])), None);
+        assert_eq!(
+            crate::aes67::refclk(pick_ptp_leader(&gms)),
+            "ptp=IEEE1588-2008:00-0A-92-FF-FE-02-77-5B:0"
+        );
     }
 
     #[test]
