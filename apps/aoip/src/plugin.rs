@@ -51,6 +51,9 @@ impl services::Aoip for Aoip {
     fn features(&self) -> Value {
         serde_json::json!({"vendors": cfg!(feature = "vendors")})
     }
+    fn parse_sdp(&self, text: &str) -> Value {
+        crate::parse_sdp(text)
+    }
 }
 
 /// Plug the AoIP listener into the host.

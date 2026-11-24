@@ -124,6 +124,10 @@ pub trait Aoip: Send + Sync {
     fn features(&self) -> Value {
         Value::Object(Map::new())
     }
+    /// An SDP's fields (session_name, multicast_ip, port, encoding, sample_rate, channels, ptime ...).
+    fn parse_sdp(&self, _text: &str) -> Value {
+        Value::Null
+    }
 }
 slot!(Aoip, aoip, provide_aoip, AOIP, NoAoip);
 

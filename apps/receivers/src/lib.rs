@@ -558,6 +558,9 @@ impl TestPoint {
 
     // -- AES67 / RAVENNA RTP --
     fn resolve_sdp(&self) -> Option<Map<String, Value>> {
+        if let Some(m) = manual_stream(&self.reference) {
+            return Some(m);
+        }
         let snap = wbs_plugin::services::aoip().snapshot();
         let sessions = snap.get("sap").and_then(|s| s.get("sessions")).and_then(|s| s.as_array()).cloned().unwrap_or_default();
         let r = json!(self.reference);
@@ -781,6 +784,42 @@ impl TestPoint {
         d.insert("channels".into(), Value::Array(chans));
         Some(Value::Object(d))
     }
+}
+
+/// A stream entered by hand: a pasted SDP ("v=0 ..."), or "239.1.2.3:5004" with optional
+/// "/8ch/L24/48000/1.0" (channels, encoding, rate, ptime; defaults 2 ch L24 48 kHz 1 ms).
+pub fn manual_stream(reference: &str) -> Option<Map<String, Value>> {
+    let r = reference.trim();
+    if r.starts_with("v=") {
+        let mut m = wbs_plugin::services::aoip().parse_sdp(r).as_object().cloned()?;
+        if !py::truthy(m.get("session_name").unwrap_or(&Value::Null)) {
+            m.insert("session_name".into(), json!("custom SDP"));
+        }
+        return Some(m);
+    }
+    let mut parts = r.split('/');
+    let (ip, port) = parts.next()?.rsplit_once(':')?;
+    let ip: std::net::Ipv4Addr = ip.trim().parse().ok()?;
+    let port: u16 = port.trim().parse().ok()?;
+    let mut m = Map::new();
+    m.insert("session_name".into(), json!(format!("{ip}:{port}")));
+    m.insert("multicast_ip".into(), json!(ip.to_string()));
+    m.insert("port".into(), json!(port));
+    m.insert("channels".into(), json!(2));
+    m.insert("encoding".into(), json!("L24"));
+    m.insert("sample_rate".into(), json!(48000));
+    m.insert("ptime".into(), json!(1.0));
+    for p in parts.map(str::trim).filter(|p| !p.is_empty()) {
+        let lower = p.to_ascii_lowercase();
+        if let Some(c) = lower.strip_suffix("ch").and_then(|c| c.parse::<i64>().ok()) {
+            m.insert("channels".into(), json!(c));
+        } else if lower == "l24" || lower == "l16" {
+            m.insert("encoding".into(), json!(p.to_ascii_uppercase()));
+        } else if let Ok(n) = p.parse::<f64>() {
+            if n >= 8000.0 { m.insert("sample_rate".into(), json!(n as i64)); } else { m.insert("ptime".into(), json!(n)); }
+        }
+    }
+    Some(m)
 }
 
 /// (parec device args, description, channel count) of a tappable PipeWire node.
@@ -1058,6 +1097,15 @@ pub fn pcm_since(since: i64, max_frames: usize) -> Option<PcmChunk> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manual_streams() {
+        let m = manual_stream("239.1.44.167:5004/8ch/L24/48000/0.125").unwrap();
+        assert_eq!((m["multicast_ip"].as_str(), m["port"].as_i64(), m["channels"].as_i64()), (Some("239.1.44.167"), Some(5004), Some(8)));
+        assert_eq!(m["ptime"].as_f64(), Some(0.125));
+        assert_eq!(manual_stream("239.3.44.167:5004").unwrap()["channels"].as_i64(), Some(2));
+        assert!(manual_stream("Desk preMO").is_none());
+    }
 
     fn tone(n: usize, amp: f32, ch: usize) -> Vec<Vec<f32>> {
         (0..ch).map(|c| (0..n).map(|i| amp * ((i as f32 * 0.05 + c as f32).sin())).collect()).collect()
