@@ -283,6 +283,18 @@ pub fn wbs_test_signals_domain_id() -> String {
     wbs_uuid(0, wbs_host_ip())
 }
 
+/// True while some writer (this TAP included: flock is per open file) holds the lock on a
+/// flow's `data` file, which is how libmxl / mxl-info tell an Active flow.
+fn writer_holds_lock(data: &Path) -> bool {
+    let Ok(f) = OpenOptions::new().read(true).open(data) else { return false };
+    if wbs_sys::try_lock_exclusive(&f) {
+        wbs_sys::unlock(&f);
+        false
+    } else {
+        true
+    }
+}
+
 /// One entry of WBS_TEST_SIGNALS_CATALOG.
 #[derive(Debug, Clone)]
 pub struct TestSignalFlow {
@@ -1466,6 +1478,8 @@ impl MxlEngine {
                     fdef.insert("domain_id".into(), meta["id"].clone());
                     fdef.insert("folder".into(), json!(item));
                     fdef.insert("path".into(), json!(item_path.to_string_lossy()));
+                    // MXL convention: a flow is Active while its writer holds the lock on `data`
+                    fdef.insert("active".into(), json!(writer_holds_lock(&item_path.join("data"))));
                     let fid = [fdef.get("id"), fdef.get("flow_id")]
                         .into_iter()
                         .flatten()
