@@ -13,3 +13,4 @@ wbs-sys.workspace = true
 wbs-log.workspace = true
 wbs-plugin.workspace = true
 wbs-pyshim.workspace = true
+wbs-generators.workspace = true

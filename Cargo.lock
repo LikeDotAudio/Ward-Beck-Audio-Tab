@@ -843,6 +843,7 @@ version = "2.2.0"
 dependencies = [
  "serde_json",
  "wbs-common",
+ "wbs-generators",
  "wbs-log",
  "wbs-plugin",
  "wbs-pyshim",

@@ -66,6 +66,8 @@ struct Data {
     bb_pid: Option<u32>,
 }
 
+use wbs_generators::spitter::{SpitterFile, SpitterParams, SpitterSynth};
+
 fn default_bb_config() -> Map<String, Value> {
     let mut m = Map::new();
     m.insert("pattern".into(), json!("prbs"));
@@ -1158,18 +1160,16 @@ fn tone_stream_worker(freq: i64) {
     let _ = child.wait();
 }
 
-/// POST /api/bitbuddy start (Python start_bit_buddy).
-pub fn start_bit_buddy(pattern: &Value, pro_mode: &Value, audio_data: &Value, sample_rate: &Value) -> Result<(), String> {
+/// POST /api/bitbuddy start: `cfg` is the whole Bit Spitter setting (pattern, level_db,
+/// tone_hz, ch_b, ext, ext_locked, fault, sample_rate, pro_mode, audio_data, validity).
+pub fn start_bit_buddy(cfg: Map<String, Value>) -> Result<(), String> {
     stop_bit_buddy();
     // Note: Allows concurrent operation with POD-33 Tone Generator (Dual Flow Spitting)
+    let sr = py::int_of(cfg.get("sample_rate").unwrap_or(&json!(48000)))?;
     d().bb_active = true;
     let _ = guard(|| services::mxl().start_generator("bit_spitter"));
-    let sr = py::int_of(sample_rate)?;
     {
-        let mut m = Map::new();
-        m.insert("pattern".into(), pattern.clone());
-        m.insert("pro_mode".into(), Value::Bool(py::truthy(pro_mode)));
-        m.insert("audio_data".into(), Value::Bool(py::truthy(audio_data)));
+        let mut m = cfg;
         m.insert("sample_rate".into(), json!(sr));
         d().bb_config = m;
     }
@@ -1185,82 +1185,111 @@ pub fn stop_bit_buddy() {
     }
 }
 
-/// Bit Buddy pattern generator state (Python _bitbuddy_worker locals).
-pub struct BitBuddyGen {
-    pub pattern: String,
-    pub lfsr: u32,
-    pub phase: f64,
-    pub step: f64,
-    pub walk_counter: u32,
+/// The looped file the Bit Spitter plays (pattern "file"): name and 48 kHz stereo PCM.
+fn bb_file() -> MutexGuard<'static, Option<(String, SpitterFile)>> {
+    static FILE: Mutex<Option<(String, SpitterFile)>> = Mutex::new(None);
+    FILE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-impl BitBuddyGen {
-    pub fn new(pattern: &str, sr: i64) -> Self {
-        BitBuddyGen {
-            pattern: pattern.to_string(),
-            lfsr: 0x7ACE,
-            phase: 0.0,
-            step: 2.0 * std::f64::consts::PI * 1000.0 / sr as f64,
-            walk_counter: 0,
-        }
+/// POST /api/bitbuddy/file {name, rate, pcm_b64: s16le stereo} or {clear: true}.
+pub fn set_bit_buddy_file(data: &Map<String, Value>) -> Result<Value, String> {
+    if data.get("clear").map(py::truthy).unwrap_or(false) {
+        *bb_file() = None;
+        return Ok(json!({"file": null}));
     }
+    let b64 = data.get("pcm_b64").and_then(|v| v.as_str()).ok_or("pcm_b64 missing")?;
+    let raw = base64_decode(b64)?;
+    let pcm: Vec<f32> = raw.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0).collect();
+    let rate = data.get("rate").and_then(|v| v.as_f64()).unwrap_or(48000.0);
+    let name = data.get("name").and_then(|v| v.as_str()).unwrap_or("file").to_string();
+    let secs = pcm.len() as f64 / 2.0 / rate;
+    wbs_log::info("bitbuddy", &format!("file loaded: {name} ({secs:.1} s)"));
+    *bb_file() = Some((name.clone(), SpitterFile { pcm: std::sync::Arc::new(pcm), rate }));
+    Ok(json!({"file": name, "seconds": secs}))
+}
 
-    /// One chunk of s16le stereo frames.
-    pub fn chunk(&mut self, chunk: usize) -> Vec<u8> {
-        let two_pi = 2.0 * std::f64::consts::PI;
-        let mut raw = Vec::with_capacity(chunk * 4);
-        for _ in 0..chunk {
-            let v: i16 = match self.pattern.as_str() {
-                "tone" => {
-                    let amp = (32767.0f64 * 0.12589) as i64; // -18 dBFS reference level
-                    let v = (amp as f64 * self.phase.sin()) as i16;
-                    self.phase = (self.phase + self.step) % two_pi;
-                    v
-                }
-                "walk1s" => {
-                    let bit_shift = (self.walk_counter / 32) % 15;
-                    let v = if self.walk_counter % 32 < 8 { (1u32 << bit_shift) as i16 } else { 0 };
-                    self.walk_counter = (self.walk_counter + 1) % 65536;
-                    v
-                }
-                "minmax" => {
-                    let v = if self.phase < std::f64::consts::PI { 32000 } else { -32000 };
-                    self.phase = (self.phase + self.step) % two_pi;
-                    v
-                }
-                _ => {
-                    // PRBS-15 sequence
-                    let bit = (self.lfsr ^ (self.lfsr >> 1)) & 1;
-                    self.lfsr = (self.lfsr >> 1) | (bit << 14);
-                    if bit != 0 { 11468 } else { -11468 }
-                }
-            };
-            raw.extend_from_slice(&v.to_le_bytes());
-            raw.extend_from_slice(&v.to_le_bytes());
+fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+    let val = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        } as u32)
+    };
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for c in s.bytes() {
+        if c == b'=' || c.is_ascii_whitespace() {
+            continue;
         }
-        raw
+        acc = (acc << 6) | val(c).ok_or("bad base64")?;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
     }
+    Ok(out)
+}
+
+/// The synth settings from the stored config.
+fn spitter_params(cfg: &Map<String, Value>) -> SpitterParams {
+    let s = |k: &str, d: &str| cfg.get(k).and_then(|v| v.as_str()).unwrap_or(d).to_string();
+    let b = |k: &str| cfg.get(k).map(py::truthy).unwrap_or(false);
+    let ch_b = s("ch_b", "on");
+    let pattern = s("pattern", "prbs");
+    SpitterParams {
+        file: if pattern == "file" { bb_file().as_ref().map(|(_, f)| f.clone()) } else { None },
+        pattern,
+        level: match cfg.get("level_db") {
+            Some(Value::Null) => None,
+            Some(v) => v.as_f64().or(Some(-20.0)),
+            None => Some(-20.0),
+        },
+        tone: cfg.get("tone_hz").and_then(|v| v.as_f64()).unwrap_or(1000.0),
+        cycle: ch_b.starts_with("cycle"),
+        invert: ch_b.ends_with("invert"),
+        b_off: ch_b == "off",
+        muted: b("ext") && !b("ext_locked"),
+        fault: s("fault", "clean"),
+    }
+}
+
+/// One chunk of s16le stereo frames.
+pub fn spitter_chunk(gen: &mut SpitterSynth, frames: usize) -> Vec<u8> {
+    let mut raw = Vec::with_capacity(frames * 4);
+    for _ in 0..frames {
+        let (l, r) = gen.next();
+        let q = |v: f64| ((v.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes();
+        raw.extend_from_slice(&q(l));
+        raw.extend_from_slice(&q(r));
+    }
+    raw
 }
 
 fn bitbuddy_worker() {
     let cfg = bitbuddy_config();
     let sr = cfg.get("sample_rate").and_then(|v| v.as_i64()).unwrap_or(48000);
-    let pattern = cfg.get("pattern").and_then(|v| v.as_str()).unwrap_or("prbs").to_string();
+    let params = spitter_params(&cfg);
     if dry_run() {
-        println!("[DRY RUN] pacat --playback --device=wbs_input_bus (Ward-Beck ABB-1 Bit Buddy {pattern} @ {sr})");
+        println!("[DRY RUN] pacat --playback --device=wbs_input_bus (Ward-Beck ABS-1 Bit Spitter {} @ {sr})", params.pattern);
         return;
     }
-    let mut child = match spawn_pacat(sr, "Ward-Beck ABB-1 Bit Buddy") {
+    let mut child = match spawn_pacat(sr, "Ward-Beck ABS-1 Bit Spitter") {
         Ok(c) => c,
         Err(_) => return, // Python: OSError is swallowed
     };
     let pid = child.id();
     d().bb_pid = Some(pid);
     let mut stdin = child.stdin.take();
-    if sr == 0 {
+    if sr <= 0 {
         eprintln!("[WARD BECK TAP] Bit Buddy Error: float division by zero");
     } else {
-        let mut gen = BitBuddyGen::new(&pattern, sr);
+        let mut gen = SpitterSynth::new(params, sr as f64);
         loop {
             let active = {
                 let g = d();
@@ -1269,7 +1298,7 @@ fn bitbuddy_worker() {
             if !active || !matches!(child.try_wait(), Ok(None)) {
                 break;
             }
-            let raw = gen.chunk(256);
+            let raw = spitter_chunk(&mut gen, 256);
             match stdin.as_mut() {
                 Some(s) => {
                     if s.write_all(&raw).and_then(|_| s.flush()).is_err() {
@@ -1498,15 +1527,16 @@ mod tests {
         let c = tone_chunk(&mut p, 2.0 * std::f64::consts::PI * 1000.0 / 48000.0, 4);
         let s: Vec<i16> = c.chunks(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
         assert_eq!(s, vec![0, 0, 538, 538, 1067, 1067, 1578, 1578]);
-        let mut g = BitBuddyGen::new("prbs", 48000);
-        let c = g.chunk(3);
+        let mut cfg = default_bb_config();
+        cfg.insert("pattern".into(), json!("tone"));
+        cfg.insert("level_db".into(), json!(-20));
+        cfg.insert("ch_b".into(), json!("invert"));
+        let mut g = SpitterSynth::new(spitter_params(&cfg), 48000.0);
+        let c = spitter_chunk(&mut g, 3);
         let s: Vec<i16> = c.chunks(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
-        assert_eq!(s, vec![11468, 11468, -11468, -11468, -11468, -11468]);
-        let mut g = BitBuddyGen::new("walk1s", 48000);
-        let c = g.chunk(40);
-        let s: Vec<i16> = c.chunks(4).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
-        assert_eq!(&s[..9], &[1, 1, 1, 1, 1, 1, 1, 1, 0]);
-        assert_eq!(&s[32..34], &[2, 2]);
+        assert_eq!(s[2], -s[3], "channel B inverted");
+        assert!(s[4] > 0 && s[4] < 3300);
+        assert_eq!(base64_decode("AAEC/w==").unwrap(), vec![0, 1, 2, 255]);
     }
 
     #[test]

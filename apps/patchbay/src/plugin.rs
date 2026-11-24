@@ -83,15 +83,16 @@ fn post(path: &str, body: &str) -> RouteResult {
         }
         "/api/bitbuddy" => {
             let data = loads_obj(body)?;
-            let cfg = tap::bitbuddy_config();
-            let pick = |k: &str, d: Value| data.get(k).cloned().or_else(|| cfg.get(k).cloned()).unwrap_or(d);
-            let pattern = pick("pattern", json!("prbs"));
-            let pro_mode = pick("pro_mode", json!(true));
-            let audio_data = pick("audio_data", json!(true));
-            let sample_rate = pick("sample_rate", json!(48000));
+            // The page sends the whole setting; anything missing keeps its last value.
+            let mut cfg = tap::bitbuddy_config();
+            for (k, v) in data.iter() {
+                if k != "active" && k != "restart" {
+                    cfg.insert(k.clone(), v.clone());
+                }
+            }
             {
                 let _g = state_lock();
-                let start = || tap::start_bit_buddy(&pattern, &pro_mode, &audio_data, &sample_rate);
+                let start = || tap::start_bit_buddy(cfg.clone());
                 match data.get("active") {
                     Some(Value::Bool(false)) => tap::stop_bit_buddy(),
                     Some(Value::Bool(true)) => start()?,
@@ -106,6 +107,16 @@ fn post(path: &str, body: &str) -> RouteResult {
                 }
             }
             json_reply(&tap::bitbuddy_json())
+        }
+        "/api/bitbuddy/file" => {
+            let data = loads_obj(body)?;
+            let rep = tap::set_bit_buddy_file(&data)?;
+            // A playing file source picks up the new file
+            if tap::bitbuddy_active() && tap::bitbuddy_config().get("pattern").and_then(|v| v.as_str()) == Some("file") {
+                let _g = state_lock();
+                tap::start_bit_buddy(tap::bitbuddy_config())?;
+            }
+            json_reply(&rep)
         }
         "/api/force_speakers" => {
             {
@@ -123,7 +134,7 @@ fn post(path: &str, body: &str) -> RouteResult {
     })
 }
 
-const POSTS: [&str; 10] = [
+const POSTS: [&str; 11] = [
     "/api/set_source",
     "/api/refresh_sources",
     "/api/toggle",
@@ -131,6 +142,7 @@ const POSTS: [&str; 10] = [
     "/api/toggle_test_tone",
     "/api/test_tone",
     "/api/bitbuddy",
+    "/api/bitbuddy/file",
     "/api/force_speakers",
     "/api/reset_all",
     "/api/restart",
