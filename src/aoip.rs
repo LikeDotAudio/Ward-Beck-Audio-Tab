@@ -2187,7 +2187,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)] // compares Linux errno wording
+    #[cfg(target_os = "linux")] // compares Linux errno numbers (macOS EADDRINUSE is 48)
     fn test_describe_error() {
         let e = OpenErr::from(io::Error::from_raw_os_error(libc::EACCES));
         assert!(describe_error(&e, 319).starts_with("bind UDP 319: [Errno 13] Permission denied; needs CAP_NET_BIND_SERVICE"));
