@@ -42,7 +42,7 @@ jobs:
           - { name: linux-x86_64, os: ubuntu-22.04, exe: ward-beck-audio-tab }
           - { name: linux-arm64, os: ubuntu-22.04-arm, exe: ward-beck-audio-tab }
           - { name: windows-x86_64, os: windows-latest, exe: ward-beck-audio-tab.exe }
-          - { name: macos-universal, os: macos-14, exe: ward-beck-audio-tab }
+          - { name: macos-universal, os: macos-latest, exe: ward-beck-audio-tab }
     defaults:
       run:
         shell: bash
