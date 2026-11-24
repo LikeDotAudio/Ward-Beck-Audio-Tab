@@ -68,15 +68,15 @@ fn post(path: &str, body: &str) -> RouteResult {
         "/api/heartbeat" => json_reply(&json!({"idle_limit_s": tap::client_timeout_secs()})),
         "/api/toggle_test_tone" | "/api/test_tone" => {
             let data = loads_obj(body)?;
-            let freq = data.get("freq").cloned().unwrap_or(json!(1000));
+            let spec = tap::ToneSpec::from_body(&data)?;
             let restart = data.get("restart");
             {
                 let _g = state_lock();
                 match restart {
-                    Some(Value::Bool(true)) => tap::start_test_tone(&freq)?,
+                    Some(Value::Bool(true)) => tap::start_test_tone(spec.clone())?,
                     Some(Value::Bool(false)) => tap::stop_test_tone(),
                     _ if tap::test_tone_active() => tap::stop_test_tone(),
-                    _ => tap::start_test_tone(&freq)?,
+                    _ => tap::start_test_tone(spec.clone())?,
                 }
             }
             json_reply(&tap::test_tone_json())

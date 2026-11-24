@@ -60,6 +60,7 @@ struct Data {
     retired: HashSet<String>,
     tone_active: bool,
     tone_freq: i64,
+    tone: ToneSpec,
     tone_pid: Option<u32>,
     bb_active: bool,
     bb_config: Map<String, Value>,
@@ -93,6 +94,7 @@ fn d() -> MutexGuard<'static, Data> {
             retired: HashSet::new(),
             tone_active: false,
             tone_freq: 1000,
+            tone: ToneSpec::default(),
             tone_pid: None,
             bb_active: false,
             bb_config: default_bb_config(),
@@ -144,7 +146,7 @@ pub fn routes_json() -> Value {
 /// {"active": TEST_TONE_ACTIVE, "freq": TEST_TONE_FREQ}
 pub fn test_tone_json() -> Value {
     let g = d();
-    json!({"active": g.tone_active, "freq": g.tone_freq})
+    json!({"active": g.tone_active, "freq": g.tone_freq, "freq_r": g.tone.freq_r, "level_db": g.tone.level_db, "channel": g.tone.channel})
 }
 
 pub fn test_tone_active() -> bool {
@@ -1079,18 +1081,71 @@ fn term_kill(pid: u32) {
 }
 
 /// POST /api/test_tone start (Python start_test_tone(freq): int(freq) after the stop).
-pub fn start_test_tone(freq: &Value) -> Result<(), String> {
+/// The POD-33 output the TAP plays: left frequency, an optional different right one
+/// (split tones such as 1 kHz / 4 kHz), level and channel / phase.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToneSpec {
+    pub freq: f64,
+    pub freq_r: Option<f64>,
+    pub level_db: f64,
+    /// stereo | left | right | invert
+    pub channel: String,
+}
+
+impl Default for ToneSpec {
+    fn default() -> Self {
+        ToneSpec { freq: 1000.0, freq_r: None, level_db: -18.0, channel: "stereo".into() }
+    }
+}
+
+impl ToneSpec {
+    /// From a /api/test_tone body: freq, freq_r, level_db, channel (missing = defaults).
+    pub fn from_body(data: &Map<String, Value>) -> Result<Self, String> {
+        let d = ToneSpec::default();
+        Ok(ToneSpec {
+            freq: py::int_of(data.get("freq").unwrap_or(&json!(1000)))? as f64,
+            freq_r: data.get("freq_r").and_then(|v| v.as_f64()).filter(|f| *f > 0.0),
+            level_db: data.get("level_db").and_then(|v| v.as_f64()).unwrap_or(d.level_db),
+            channel: data.get("channel").and_then(|v| v.as_str()).unwrap_or("stereo").to_string(),
+        })
+    }
+}
+
+pub fn start_test_tone(spec: ToneSpec) -> Result<(), String> {
     stop_test_tone();
     // Note: Allows concurrent operation with ABP-1 Bit Spitter (Dual Flow Spitting)
-    let f = py::int_of(freq)?;
     {
         let mut g = d();
-        g.tone_freq = f;
+        g.tone_freq = spec.freq as i64;
+        g.tone = spec.clone();
         g.tone_active = true;
     }
     let _ = guard(|| services::mxl().start_generator("tone"));
-    thread::spawn(move || tone_stream_worker(f));
+    thread::spawn(move || tone_stream_worker(spec));
     Ok(())
+}
+
+/// s16le stereo frames of a ToneSpec; `phase` is (left, right).
+pub fn tone_spec_chunk(spec: &ToneSpec, phase: &mut (f64, f64), chunk: usize) -> Vec<u8> {
+    let two_pi = 2.0 * std::f64::consts::PI;
+    let amp = if spec.level_db <= -90.0 { 0.0 } else { 10f64.powf(spec.level_db / 20.0) };
+    let (sl, sr) = (two_pi * spec.freq / 48000.0, two_pi * spec.freq_r.unwrap_or(spec.freq) / 48000.0);
+    let mut raw = Vec::with_capacity(chunk * 4);
+    for _ in 0..chunk {
+        let mut l = if spec.freq > 0.0 { amp * phase.0.sin() } else { 0.0 };
+        let mut r = if spec.freq > 0.0 { amp * phase.1.sin() } else { 0.0 };
+        match spec.channel.as_str() {
+            "left" => r = 0.0,
+            "right" => l = 0.0,
+            "invert" => r = -r,
+            _ => {}
+        }
+        raw.extend_from_slice(&((l * 32767.0) as i16).to_le_bytes());
+        raw.extend_from_slice(&((r * 32767.0) as i16).to_le_bytes());
+        phase.0 = (phase.0 + sl) % two_pi;
+        phase.1 = (phase.1 + sr) % two_pi;
+    }
+    raw
 }
 
 pub fn stop_test_tone() {
@@ -1114,7 +1169,8 @@ pub fn tone_chunk(phase: &mut f64, step: f64, chunk: usize) -> Vec<u8> {
     raw
 }
 
-fn tone_stream_worker(freq: i64) {
+fn tone_stream_worker(spec: ToneSpec) {
+    let freq = spec.freq;
     if dry_run() {
         println!("[DRY RUN] pacat --playback --device=wbs_input_bus (Ward-Beck Test Tone {freq} Hz)");
         return;
@@ -1128,8 +1184,7 @@ fn tone_stream_worker(freq: i64) {
     };
     let pid = child.id();
     d().tone_pid = Some(pid);
-    let step = 2.0 * std::f64::consts::PI * freq as f64 / 48000.0;
-    let mut p = 0.0f64;
+    let mut p = (0.0f64, 0.0f64);
     let mut stdin = child.stdin.take();
     loop {
         let active = {
@@ -1139,7 +1194,7 @@ fn tone_stream_worker(freq: i64) {
         if !active || !matches!(child.try_wait(), Ok(None)) {
             break;
         }
-        let raw = tone_chunk(&mut p, step, 256);
+        let raw = tone_spec_chunk(&spec, &mut p, 256);
         match stdin.as_mut() {
             Some(s) => {
                 if s.write_all(&raw).and_then(|_| s.flush()).is_err() {
@@ -1537,6 +1592,11 @@ mod tests {
         assert_eq!(s[2], -s[3], "channel B inverted");
         assert!(s[4] > 0 && s[4] < 3300);
         assert_eq!(base64_decode("AAEC/w==").unwrap(), vec![0, 1, 2, 255]);
+        let spec = ToneSpec { freq: 1000.0, freq_r: Some(4000.0), level_db: -20.0, channel: "stereo".into() };
+        let c = tone_spec_chunk(&spec, &mut (0.0, 0.0), 3);
+        let s: Vec<i16> = c.chunks(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+        assert_eq!(s[2], (0.1 * (2.0 * std::f64::consts::PI / 48.0).sin() * 32767.0) as i16);
+        assert_eq!(s[3], (0.1 * (2.0 * std::f64::consts::PI / 12.0).sin() * 32767.0) as i16, "right at 4 kHz");
     }
 
     #[test]

@@ -37,6 +37,42 @@ fn default_iface() -> Option<String> {
     None
 }
 
+/// How often the TAP wants timesyncd to ask its server (seconds).
+pub const POLL_WANT_S: f64 = 45.0;
+
+/// systemd time span ("34min 8s", "45s", "1h 2min", "500ms") in seconds.
+pub fn parse_timespan(v: &str) -> Option<f64> {
+    let mut total = 0.0;
+    let mut any = false;
+    for tok in v.split_whitespace() {
+        let i = tok.find(|c: char| !(c.is_ascii_digit() || c == '.'))?;
+        let n: f64 = tok[..i].parse().ok()?;
+        total += n * match &tok[i..] {
+            "us" | "usec" => 1e-6,
+            "ms" | "msec" => 1e-3,
+            "s" | "sec" => 1.0,
+            "min" | "m" => 60.0,
+            "h" | "hr" => 3600.0,
+            "d" => 86400.0,
+            _ => return None,
+        };
+        any = true;
+    }
+    any.then_some(total)
+}
+
+/// The runtime prompt that makes timesyncd poll every 45 s (it needs sudo, so the user runs it).
+pub fn poll_fix(max_now: &str) -> Value {
+    let want = POLL_WANT_S as u64;
+    json!({
+        "title": format!("Poll the NTP server every {want} s"),
+        "why": format!("timesyncd backs off to {max_now} between polls once the clock is steady, so the NTP log only gets a line that often. \
+                        Capping the poll interval at {want} s needs your password, so run this in a terminal."),
+        "options": [{"label": "Permanently", "note": "saved as /etc/systemd/timesyncd.conf.d/poll.conf",
+            "command": format!("sudo mkdir -p /etc/systemd/timesyncd.conf.d && printf '[Time]\\nPollIntervalMinSec=32\\nPollIntervalMaxSec={want}\\n' | sudo tee /etc/systemd/timesyncd.conf.d/poll.conf && sudo systemctl restart systemd-timesyncd")}],
+    })
+}
+
 /// The runtime prompt that points NTP at the NRC (it needs sudo, so the user runs it).
 pub fn nrc_fix(daemon: &str, iface: Option<&str>) -> Value {
     let servers = NRC_SERVERS.join(" ");
@@ -238,9 +274,13 @@ pub fn status() -> Value {
     let server = sync.get("ServerName").and_then(Value::as_str).unwrap_or("").to_string();
     let nrc = uses_nrc(&server);
     let iface = default_iface();
+    // NRC first; then a poll interval that lets the log see a receipt every 45 s
+    let max_poll = sync.get("PollIntervalMaxUSec").and_then(Value::as_str).unwrap_or("").to_string();
+    let slow = parse_timespan(&max_poll).map(|s| s > POLL_WANT_S).unwrap_or(false);
+    let fix = if !nrc { nrc_fix("systemd-timesyncd", iface.as_deref()) } else if slow { poll_fix(&max_poll) } else { Value::Null };
     json!({
         "nrc": nrc,
-        "fix": if nrc { Value::Null } else { nrc_fix("systemd-timesyncd", iface.as_deref()) },
+        "fix": fix,
         "daemon": if sync.is_empty() { "unknown" } else { "systemd-timesyncd" },
         "enabled": enabled,
         "synchronized": synced,
@@ -288,6 +328,12 @@ mod tests {
     #[test]
     fn nrc_is_offered_until_it_is_used() {
         assert!(uses_nrc("time.chu.nrc.ca") && uses_nrc("132.246.11.227 (time.nrc.ca)") && !uses_nrc("ntp.ubuntu.com"));
+        assert_eq!(parse_timespan("34min 8s"), Some(2048.0));
+        assert_eq!(parse_timespan("45s"), Some(45.0));
+        assert_eq!(parse_timespan("500ms"), Some(0.5));
+        assert_eq!(parse_timespan(""), None);
+        let p = poll_fix("34min 8s");
+        assert!(p["options"][0]["command"].as_str().unwrap().contains("PollIntervalMaxSec=45\\n"));
         let f = nrc_fix("systemd-timesyncd", Some("enp12s0"));
         assert_eq!(f["options"][0]["command"], "sudo timedatectl ntp-servers enp12s0 time.nrc.ca time.chu.nrc.ca");
         assert!(f["options"][1]["command"].as_str().unwrap().contains("NTP=time.nrc.ca time.chu.nrc.ca"));
