@@ -356,8 +356,14 @@ fn do_get(path: &str, query: &str) -> RouteResult {
         "/api/cbc/status" => json_reply(&cbc::state()),
         "/api/bitbuddy" => {
             let _g = state_lock();
-            json_reply(&tap::bitbuddy_json())
+            // The test tone rides along so a page's one generator poll sees both.
+            let mut rep = tap::bitbuddy_json();
+            if let Some(o) = rep.as_object_mut() {
+                o.insert("test_tone".into(), tap::test_tone_json());
+            }
+            json_reply(&rep)
         }
+        "/api/test_tone" => json_reply(&tap::test_tone_json()),
         p if p == "/api/mxl/waveform" || (p.starts_with("/api/mxl/flow/") && p.contains("/waveform")) => {
             let flow_id = match seg(p, 4) {
                 Some(s) if s != "waveform" => s.to_string(),
