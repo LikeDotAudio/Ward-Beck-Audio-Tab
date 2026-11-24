@@ -11,6 +11,51 @@ use crate::util::run_cmd;
 
 const T: Duration = Duration::from_secs(2);
 
+/// National Research Council Canada: the official Canadian time servers.
+pub const NRC_SERVERS: [&str; 2] = ["time.nrc.ca", "time.chu.nrc.ca"];
+
+/// Is this machine taking its time from the NRC?
+pub fn uses_nrc(server: &str) -> bool {
+    server.to_lowercase().contains("nrc.ca")
+}
+
+/// The interface the default route leaves by (where timesyncd's link servers apply).
+fn default_iface() -> Option<String> {
+    let out = run_cmd(&["ip", "route", "show", "default"], T)?;
+    let mut it = out.split_whitespace();
+    while let Some(w) = it.next() {
+        if w == "dev" {
+            return it.next().map(String::from);
+        }
+    }
+    None
+}
+
+/// The runtime prompt that points NTP at the NRC (it needs sudo, so the user runs it).
+pub fn nrc_fix(daemon: &str, iface: Option<&str>) -> Value {
+    let servers = NRC_SERVERS.join(" ");
+    let mut options = Vec::new();
+    if daemon == "chrony" {
+        options.push(json!({"label": "This session only", "note": "until chrony restarts",
+            "command": NRC_SERVERS.iter().map(|s| format!("sudo chronyc add server {s} iburst")).collect::<Vec<_>>().join(" && ")}));
+        options.push(json!({"label": "Permanently", "note": "saved as /etc/chrony/sources.d/nrc.sources",
+            "command": format!("printf 'server %s iburst\\n' {servers} | sudo tee /etc/chrony/sources.d/nrc.sources && sudo chronyc reload sources")}));
+    } else {
+        if let Some(i) = iface {
+            options.push(json!({"label": "This session only", "note": format!("link servers on {i}, gone at the next reboot"),
+                "command": format!("sudo timedatectl ntp-servers {i} {servers}")}));
+        }
+        options.push(json!({"label": "Permanently", "note": "saved as /etc/systemd/timesyncd.conf.d/nrc.conf",
+            "command": format!("sudo mkdir -p /etc/systemd/timesyncd.conf.d && printf '[Time]\\nNTP={servers}\\n' | sudo tee /etc/systemd/timesyncd.conf.d/nrc.conf && sudo systemctl restart systemd-timesyncd")}));
+    }
+    json!({
+        "title": "Take time from the NRC",
+        "why": format!("Canada's official time comes from the National Research Council ({}). \
+                        Changing the NTP servers needs your password, so run one of these in a terminal.", NRC_SERVERS.join(", ")),
+        "options": options,
+    })
+}
+
 /// `Key=Value` lines (timedatectl show / show-timesync) into a map.
 pub fn parse_kv(text: &str) -> Map<String, Value> {
     text.lines()
@@ -89,7 +134,11 @@ pub fn status() -> Value {
             .lines()
             .filter_map(|l| l.split(',').nth(2).map(String::from))
             .collect::<Vec<_>>();
+        let server = t.get("server").and_then(Value::as_str).unwrap_or("").to_string();
+        let nrc = uses_nrc(&server) || sources.iter().any(|s| uses_nrc(s));
         return json!({
+            "nrc": nrc,
+            "fix": if nrc { Value::Null } else { nrc_fix("chrony", None) },
             "daemon": "chrony",
             "enabled": enabled,
             "synchronized": synced,
@@ -111,7 +160,12 @@ pub fn status() -> Value {
         let v = sync.get(k).and_then(Value::as_str).unwrap_or("");
         json!(v.split_whitespace().collect::<Vec<_>>())
     };
+    let server = sync.get("ServerName").and_then(Value::as_str).unwrap_or("").to_string();
+    let nrc = uses_nrc(&server);
+    let iface = default_iface();
     json!({
+        "nrc": nrc,
+        "fix": if nrc { Value::Null } else { nrc_fix("systemd-timesyncd", iface.as_deref()) },
         "daemon": if sync.is_empty() { "unknown" } else { "systemd-timesyncd" },
         "enabled": enabled,
         "synchronized": synced,
@@ -154,6 +208,15 @@ mod tests {
         let kv = parse_kv("FallbackNTPServers=ntp.ubuntu.com\nSystemNTPServers=\n");
         assert_eq!(kv["FallbackNTPServers"], "ntp.ubuntu.com");
         assert_eq!(active_lines("#  comment\n[Time]\n\n#NTP=\nNTP=10.0.0.1 pool.ntp.org\n"), vec!["[Time]", "NTP=10.0.0.1 pool.ntp.org"]);
+    }
+
+    #[test]
+    fn nrc_is_offered_until_it_is_used() {
+        assert!(uses_nrc("time.chu.nrc.ca") && uses_nrc("132.246.11.227 (time.nrc.ca)") && !uses_nrc("ntp.ubuntu.com"));
+        let f = nrc_fix("systemd-timesyncd", Some("enp12s0"));
+        assert_eq!(f["options"][0]["command"], "sudo timedatectl ntp-servers enp12s0 time.nrc.ca time.chu.nrc.ca");
+        assert!(f["options"][1]["command"].as_str().unwrap().contains("NTP=time.nrc.ca time.chu.nrc.ca"));
+        assert!(nrc_fix("chrony", None)["options"][0]["command"].as_str().unwrap().contains("chronyc add server time.nrc.ca"));
     }
 
     #[test]

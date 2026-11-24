@@ -241,8 +241,11 @@ fn short_label(l: &str) -> String {
 
 /// GET /api/aes67
 pub fn status() -> Value {
+    let leader = crate::aoip::ptp_leader();
     let st = state().lock().unwrap();
     json!({
+        // The PTP leader the SDPs name (ts-refclk), or null: no PTP heard.
+        "ptp_leader": leader.map(|(gm, domain)| json!({"identity": gm.to_uppercase().replace(':', "-"), "domain": domain})),
         "sap_group": format!("{SAP_GROUP}:{SAP_PORT}"),
         "dry_run": dry_run(),
         "transmitters": st.txs.iter().map(|t| t.json()).collect::<Vec<_>>(),
