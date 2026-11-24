@@ -15,13 +15,6 @@ use serde_json::{json, Value};
 
 use crate::tap::{run_cmd, run_mut};
 
-/// The TAP buses, in signal order, with the names people use for them.
-const BUSES: &[(&str, &str)] = &[
-    ("wbs_input_bus", "Program (input bus)"),
-    ("wbs_insert_bus", "Insert bus"),
-    ("wbs_meter_tap", "Meter tap"),
-    ("wbs_test_point", "Test point"),
-];
 const MARK: &str = "sink_input_properties=media.name=wbs_hwout";
 
 fn pactl_json(what: &str) -> Vec<Value> {
@@ -66,9 +59,14 @@ pub fn status() -> Value {
             })
         })
         .collect();
-    let mut sources: Vec<Value> = BUSES
+    // The TAP buses, in signal order: "Ward-Beck TAP 1: Input Bus (detail)" -> label "Input Bus", detail
+    let mut sources: Vec<Value> = crate::tap::WBS_SINKS
         .iter()
-        .map(|(bus, label)| json!({"name": format!("{bus}.monitor"), "label": label, "kind": "bus"}))
+        .map(|(bus, desc, _)| {
+            let after = desc.split_once(": ").map_or(*desc, |x| x.1);
+            let (label, detail) = after.split_once(" (").unwrap_or((after, ""));
+            json!({"name": format!("{bus}.monitor"), "label": label, "detail": detail.trim_end_matches(')'), "kind": "bus"})
+        })
         .collect();
     for x in pactl_json("sources") {
         let name = s(&x, "name");

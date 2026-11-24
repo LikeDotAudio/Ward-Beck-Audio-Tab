@@ -1282,13 +1282,24 @@ pub fn reset_all() -> Value {
     json!({"generators": generators, "modules": modules, "processes": processes})
 }
 
-/// The four WBS null sinks: (sink_name, device.description).
-pub const WBS_SINKS: [(&str, &str); 4] = [
-    ("wbs_input_bus", "WBS_Input_Bus"),
-    ("wbs_insert_bus", "WBS_Insert_Bus"),
-    ("wbs_meter_tap", "WBS_Meter_Tap"),
-    ("wbs_test_point", "WBS_Test_Point"),
+/// The four WBS null sinks: (sink_name, device.description, node.nick). The description is what
+/// the desktop's sound settings list, so it says what the point carries. ASCII only: pactl
+/// rejects non-ASCII in module arguments.
+pub const WBS_SINKS: [(&str, &str, &str); 4] = [
+    ("wbs_input_bus", "Ward-Beck TAP 1: Input Bus (default output, every app plays here)", "TAP Input Bus"),
+    ("wbs_insert_bus", "Ward-Beck TAP 2: Insert Bus (selected source, feeds the speakers)", "TAP Insert Bus"),
+    ("wbs_meter_tap", "Ward-Beck TAP 3: Meter Tap (selected source, feeds the XTM meters)", "TAP Meter Tap"),
+    ("wbs_test_point", "Ward-Beck TAP 4: Test Point (post-insert copy for analysers)", "TAP Test Point"),
 ];
+
+/// module-null-sink arguments for one WBS sink.
+pub fn null_sink_args(name: &str, desc: &str, nick: &str) -> Vec<String> {
+    vec![
+        "module-null-sink".to_string(),
+        format!("sink_name={name}"),
+        format!("sink_properties='device.description=\"{desc}\" node.nick=\"{nick}\" device.icon_name=audio-card'"),
+    ]
+}
 
 /// Tears down everything cleanly and rebuilds the entire WBS topology from zero.
 pub fn full_restart() {
@@ -1300,12 +1311,8 @@ pub fn full_restart() {
     let phys = detect_physical_sink();
     d().physical_sink = phys.clone();
 
-    for (name, desc) in WBS_SINKS {
-        load_module(&[
-            "module-null-sink".to_string(),
-            format!("sink_name={name}"),
-            format!("sink_properties=device.description={desc}"),
-        ]);
+    for (name, desc, nick) in WBS_SINKS {
+        load_module(&null_sink_args(name, desc, nick));
     }
 
     run_mut(&["pactl", "set-default-sink", "wbs_input_bus"]);
