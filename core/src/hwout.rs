@@ -69,13 +69,15 @@ pub fn status() -> Value {
             })
         })
         .collect();
-    // The TAP buses, in signal order: "Ward-Beck TAP 1: Input Bus (detail)" -> label "Input Bus", detail
+    // Rows: the TAP's two outputs to hardware ("Ward-Beck TAP 5: HW 1 (Speakers)" -> tag "HW 1",
+    // label "Speakers"), then the hardware inputs.
     let mut sources: Vec<Value> = crate::tap::WBS_SINKS
         .iter()
+        .filter(|(bus, ..)| *bus == crate::tap::HW1 || *bus == crate::tap::HW2)
         .map(|(bus, desc, _)| {
             let after = desc.split_once(": ").map_or(*desc, |x| x.1);
-            let (label, detail) = after.split_once(" (").unwrap_or((after, ""));
-            json!({"name": format!("{bus}.monitor"), "label": label, "detail": detail.trim_end_matches(')'), "kind": "bus"})
+            let (tag, label) = after.split_once(" (").unwrap_or((after, ""));
+            json!({"name": format!("{bus}.monitor"), "tag": tag, "label": label.trim_end_matches(')'), "kind": "out"})
         })
         .collect();
     for x in pactl_json("sources") {
@@ -110,7 +112,7 @@ pub fn set(source: &str, sink: &str, on: bool) -> Result<Value, String> {
         let (code, _, err) = run_mut(&[
             "pactl", "load-module", "module-loopback",
             &format!("source={source}"), &format!("sink={sink}"),
-            "latency_msec=20", "source_dont_move=true", "sink_dont_move=true", MARK,
+            "latency_msec=40", "source_dont_move=true", "sink_dont_move=true", MARK,
         ]);
         if code != 0 && code != -1 {
             return Err(format!("load-module failed: {}", err.trim()));

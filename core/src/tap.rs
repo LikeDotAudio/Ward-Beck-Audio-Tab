@@ -1289,11 +1289,17 @@ pub fn reset_all() -> Value {
 /// The four WBS null sinks: (sink_name, device.description, node.nick). The description is what
 /// the desktop's sound settings list, so it says what the point carries. ASCII only: pactl
 /// rejects non-ASCII in module arguments.
-pub const WBS_SINKS: [(&str, &str, &str); 4] = [
+/// The TAP's two outputs to hardware: the hardware grid sends each to any sound cards.
+pub const HW1: &str = "wbs_hw1";
+pub const HW2: &str = "wbs_hw2";
+
+pub const WBS_SINKS: [(&str, &str, &str); 6] = [
     ("wbs_input_bus", "Ward-Beck TAP 1: Input Bus (default output, every app plays here)", "TAP Input Bus"),
     ("wbs_insert_bus", "Ward-Beck TAP 2: Insert Bus (selected source, feeds the speakers)", "TAP Insert Bus"),
     ("wbs_meter_tap", "Ward-Beck TAP 3: Meter Tap (selected source, feeds the XTM meters)", "TAP Meter Tap"),
     ("wbs_test_point", "Ward-Beck TAP 4: Test Point (post-insert copy for analysers)", "TAP Test Point"),
+    ("wbs_hw1", "Ward-Beck TAP 5: HW 1 (Speakers)", "TAP HW 1 Speakers"),
+    ("wbs_hw2", "Ward-Beck TAP 6: HW 2 (Cue/HP)", "TAP HW 2 Cue/HP"),
 ];
 
 /// module-null-sink arguments for one WBS sink.
@@ -1324,6 +1330,14 @@ pub fn full_restart() {
     refresh_sources();
     set_selected_source("wbs_input_bus.monitor");
     apply_routes();
+    // HW 1 plays on the speakers until the hardware grid says otherwise
+    let hw1 = format!("{HW1}.monitor");
+    let mods = run_cmd(&["pactl", "list", "short", "modules"]).1;
+    if !phys.is_empty() && !crate::hwout::loopbacks(&mods).iter().any(|(_, src, ..)| *src == hw1) {
+        if let Err(e) = crate::hwout::set(&hw1, &phys, true) {
+            crate::log::warn("hw", &format!("HW 1 -> {phys}: {e}"));
+        }
+    }
 
     // Start MXL Engine continuous ring buffers
     let sel = selected_source();
@@ -1359,10 +1373,11 @@ pub fn route_table(selected: &str, routes: [bool; 4], physical: &str) -> (Vec<Ve
     if routes[1] {
         out.push(lb(selected, "wbs_insert_bus"));
     }
-    // 3. WBS Insert Bus -> Physical Speakers (SAFEGUARDED)
-    if routes[2] && !physical.is_empty() {
+    // 3. WBS Insert Bus -> HW 1 (Speakers) (SAFEGUARDED); the hardware grid sends HW 1 to the cards
+    let _ = physical;
+    if routes[2] {
         if !source_is_mic {
-            out.push(lb("wbs_insert_bus.monitor", physical));
+            out.push(lb("wbs_insert_bus.monitor", HW1));
         } else {
             muted = true;
         }
@@ -1895,13 +1910,13 @@ mod tests {
         assert!(!muted);
         assert_eq!(l.len(), 4);
         assert_eq!(l[0], ["module-loopback", "source=wbs_input_bus.monitor", "sink=wbs_meter_tap", "latency_msec=40"]);
-        assert_eq!(l[2], ["module-loopback", "source=wbs_insert_bus.monitor", "sink=alsa_output.x", "latency_msec=40"]);
+        assert_eq!(l[2], ["module-loopback", "source=wbs_insert_bus.monitor", "sink=wbs_hw1", "latency_msec=40"]);
         assert_eq!(l[3], ["module-loopback", "source=wbs_insert_bus.monitor", "sink=wbs_test_point", "latency_msec=40"]);
         let (l, muted) = route_table("alsa_input.usb-mic", [true; 4], "alsa_output.x");
         assert!(muted);
         assert_eq!(l.len(), 3);
         let (l, _) = route_table("x.monitor", [false, true, true, false], "");
-        assert_eq!(l.len(), 1);
+        assert_eq!(l.len(), 2); // HW 1 is always there, a speaker card or not
     }
 
     #[test]
