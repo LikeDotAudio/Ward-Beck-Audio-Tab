@@ -7,8 +7,8 @@
 # See docker-compose.yml and docs/deploy/linux-docker.md.
 #
 # Builds natively for whatever platform the builder targets (linux/amd64, linux/arm64);
-# CI builds arm64 under QEMU. Needs only the repo plus the Generators/ submodule:
-#   git submodule update --init Generators && docker build -t ward-beck-audio-tap .
+# CI builds arm64 under QEMU. Needs the repo plus the Generators/ and PTP/ submodules:
+#   git submodule update --init Generators PTP && docker build -t ward-beck-audio-tap .
 
 # ---- build: the Rust daemon ----
 FROM rust:1-slim-bookworm AS build
@@ -18,6 +18,8 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock LICENSE ./
 COPY Generators/LICENSE ./Generators/LICENSE
 COPY Generators/rust ./Generators/rust
+# The APK PTP sniffer (path dependency apkaudio-ptp).
+COPY PTP/SRC ./PTP/SRC
 COPY web ./web
 COPY src ./src
 RUN cargo build --release --locked \

@@ -13,10 +13,17 @@ pub fn port() -> u16 {
     std::env::var("WBS_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(8467)
 }
 
-/// MXL shared-memory root (Python: SHM_BASE_DIR = "/dev/shm/mxl").
-/// Override with WBS_SHM_BASE for side-by-side testing.
+/// MXL shared-memory root (Python: SHM_BASE_DIR = "/dev/shm/mxl"). Linux keeps the rings
+/// in RAM under /dev/shm; macOS and Windows have no /dev/shm, so the rings are memory-mapped
+/// files in the temp folder (the OS page cache holds them). Override with WBS_SHM_BASE.
 pub fn shm_base() -> String {
-    std::env::var("WBS_SHM_BASE").unwrap_or_else(|_| "/dev/shm/mxl".to_string())
+    std::env::var("WBS_SHM_BASE").unwrap_or_else(|_| {
+        if cfg!(target_os = "linux") {
+            "/dev/shm/mxl".to_string()
+        } else {
+            std::env::temp_dir().join("mxl").display().to_string()
+        }
+    })
 }
 
 /// Process-wide shutdown flag (Python: SHUTDOWN_EVENT).

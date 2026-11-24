@@ -3,7 +3,7 @@
 #   push to main  -> ghcr.io/wardbecksystems/ward-beck-audio-tap:latest, :main, :sha-<short>
 #   tag v1.2.3    -> :1.2.3, :1.2, :1 (and :latest is left on main)
 #   pull request  -> build only (linux/amd64), nothing is pushed
-# linux/arm64 is built under QEMU: the crate is pure Rust (no TLS, no C deps), so an
+# linux/arm64 is built under QEMU: the crate is almost pure Rust (only ring, for the vendor lookup), so an
 # emulated release build fits comfortably in the job time limit.
 name: docker
 
@@ -30,9 +30,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Only Generators/ (crate wbs-generators) is needed; mxl-hands-on is large and unused here.
-      - name: Fetch the Generators submodule
-        run: git submodule update --init Generators
+      # Generators/ (crate wbs-generators) and PTP/ (apkaudio-ptp); mxl-hands-on is large and unused here.
+      - name: Fetch the Generators and PTP submodules
+        run: git submodule update --init Generators PTP
 
       - uses: docker/setup-qemu-action@v3
         with:

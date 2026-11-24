@@ -1,0 +1,219 @@
+# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+# Build, test, smoke-run and package the Ward-Beck Audio Tap for Linux, Windows and macOS.
+#
+#   every push / PR -> build + tests + a smoke run on each OS; logs kept as artifacts
+#   push to main    -> the "nightly" pre-release is replaced with these builds
+#   tag v1.2.3      -> a GitHub Release "v1.2.3" with every download
+#
+# Download names never carry the version, so a link to
+#   https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/<name>
+# always serves the newest release (and .../releases/download/nightly/<name> the newest build).
+#
+# Signing runs only when its secrets exist:
+#   Windows: WINDOWS_CERT_PFX_BASE64, WINDOWS_CERT_PASSWORD
+#   macOS:   APPLE_CERT_P12_BASE64, APPLE_CERT_PASSWORD, APPLE_SIGNING_IDENTITY,
+#            APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD (notarization)
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64, os: ubuntu-22.04, exe: ward-beck-audio-tab }
+          - { name: linux-arm64, os: ubuntu-22.04-arm, exe: ward-beck-audio-tab }
+          - { name: windows-x86_64, os: windows-latest, exe: ward-beck-audio-tab.exe }
+          - { name: macos-universal, os: macos-14, exe: ward-beck-audio-tab }
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Signing steps run only when the certificates are set as repository secrets.
+      WIN_SIGN: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' && 'yes' || '' }}
+      MAC_SIGN: ${{ secrets.APPLE_CERT_P12_BASE64 != '' && 'yes' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Generators/ and PTP/ are path dependencies; mxl-hands-on is large and not needed.
+      - name: Submodules
+        run: git submodule update --init Generators PTP
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.name == 'macos-universal' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+
+      - name: Tests
+        # The suite was written against Linux; on Windows / macOS its results are kept but
+        # do not fail the build until those platforms have their own audio back ends.
+        continue-on-error: ${{ runner.os != 'Linux' }}
+        run: cargo test --release 2>&1 | tee test-output.txt
+
+      - name: Build
+        run: |
+          if [ "${{ matrix.name }}" = macos-universal ]; then
+            cargo build --release --target aarch64-apple-darwin
+            cargo build --release --target x86_64-apple-darwin
+            mkdir -p target/release
+            lipo -create -output target/release/ward-beck-audio-tab \
+              target/aarch64-apple-darwin/release/ward-beck-audio-tab \
+              target/x86_64-apple-darwin/release/ward-beck-audio-tab
+            lipo -info target/release/ward-beck-audio-tab
+          else
+            cargo build --release
+          fi
+
+      # Start the real binary, hit every endpoint the web app uses, keep what it said.
+      - name: Smoke run
+        run: |
+          mkdir -p smoke
+          export WBS_NO_BROWSER=1 WBS_LOG_FILE="$PWD/smoke/tap.log"
+          ./target/release/${{ matrix.exe }} --no-browser > smoke/stdout.txt 2> smoke/stderr.txt &
+          PID=$!
+          for i in $(seq 1 60); do curl -fsS -m 2 http://127.0.0.1:8467/api/diagnostics >/dev/null 2>&1 && break; sleep 1; done
+          ok=0
+          for ep in diagnostics status mxl mxl/rings aoip/multicast aes67 ntp hw log pipeline; do
+            name=$(echo "$ep" | tr / _)
+            if curl -fsS -m 10 "http://127.0.0.1:8467/api/$ep" -o "smoke/$name.json"; then
+              echo "✔ /api/$ep"
+            else
+              echo "✘ /api/$ep"; ok=1
+            fi
+          done
+          curl -fsS -m 20 http://127.0.0.1:8467/api/diagnostics/bundle -o smoke/diagnostic-bundle.txt || ok=1
+          sleep 2
+          kill $PID 2>/dev/null || taskkill //PID $PID //F 2>/dev/null || true
+          echo "--- log ---"; cat smoke/tap.log || true
+          exit $ok
+
+      - name: Smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ matrix.name }}
+          path: |
+            smoke/
+            test-output.txt
+
+      - name: Sign (Windows)
+        if: runner.os == 'Windows' && env.WIN_SIGN == 'yes'
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1
+          & $signtool.FullName sign /f cert.pfx /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 target\release\ward-beck-audio-tab.exe
+          Remove-Item cert.pfx
+
+      - name: Sign and notarize (macOS)
+        if: runner.os == 'macOS' && env.MAC_SIGN == 'yes'
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          echo "$APPLE_CERT_P12_BASE64" | base64 --decode > cert.p12
+          security create-keychain -p ci build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p ci build.keychain
+          security import cert.p12 -k build.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" target/release/ward-beck-audio-tab
+          ditto -c -k target/release/ward-beck-audio-tab notarize.zip
+          xcrun notarytool submit notarize.zip --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          rm -f cert.p12 notarize.zip
+
+      - name: Package
+        run: |
+          N=ward-beck-audio-tap-${{ matrix.name }}
+          mkdir -p "dist/$N"
+          cp target/release/${{ matrix.exe }} README.md LICENSE "dist/$N/"
+          case "${{ matrix.name }}" in
+            linux-*)   cp install.sh uninstall.sh ward-beck-audio-tab.service "dist/$N/" ;;
+            windows-*) cp packaging/windows/*.ps1 "dist/$N/" ;;
+            macos-*)   cp packaging/macos/*.sh "dist/$N/" ;;
+          esac
+          cd dist
+          case "${{ matrix.name }}" in
+            windows-*) 7z a "$N.zip" "$N" > /dev/null ;;
+            macos-*)   ditto -c -k --keepParent "$N" "$N.zip" ;;
+            *)         tar czf "$N.tar.gz" "$N" ;;
+          esac
+          ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.name }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+
+  publish:
+    needs: build
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: assets
+      - name: Release notes
+        run: |
+          base="https://github.com/$REPO/releases"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then dl="$base/latest/download"; else dl="$base/download/nightly"; fi
+          cat > notes.md <<EOF
+          ## Downloads
+
+          | System | Download | Install |
+          |---|---|---|
+          | Linux x86_64 | [ward-beck-audio-tap-linux-x86_64.tar.gz]($dl/ward-beck-audio-tap-linux-x86_64.tar.gz) | \`bash install.sh\` |
+          | Linux ARM64 (Raspberry Pi 4/5) | [ward-beck-audio-tap-linux-arm64.tar.gz]($dl/ward-beck-audio-tap-linux-arm64.tar.gz) | \`bash install.sh\` |
+          | Windows 10/11 x64 | [ward-beck-audio-tap-windows-x86_64.zip]($dl/ward-beck-audio-tap-windows-x86_64.zip) | right-click \`install.ps1\` > Run with PowerShell |
+          | macOS 14.2+ (Apple silicon and Intel) | [ward-beck-audio-tap-macos-universal.zip]($dl/ward-beck-audio-tap-macos-universal.zip) | \`bash install.sh\` |
+
+          After installing, open https://ward-beck.ca or https://xtm.wbsps.ca.
+          Something wrong? Send the file from http://127.0.0.1:8467/api/diagnostics/bundle
+
+          Built from ${GITHUB_SHA::7}.
+          EOF
+          sed -i 's/^          //' notes.md
+      - name: Publish
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            gh release create "$GITHUB_REF_NAME" assets/* -R "$REPO" --title "Ward-Beck Audio Tap $GITHUB_REF_NAME" --notes-file notes.md
+          else
+            gh release delete nightly -R "$REPO" --yes --cleanup-tag 2>/dev/null || true
+            gh release create nightly assets/* -R "$REPO" --prerelease --target "$GITHUB_SHA" \
+              --title "Nightly build (${GITHUB_SHA::7})" --notes-file notes.md
+          fi

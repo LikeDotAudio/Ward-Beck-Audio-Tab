@@ -1,12 +1,37 @@
 # Ward-Beck Audio Tap
 
 [![License](https://img.shields.io/badge/License-Ward--Beck%20Systems-1a3b5c.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20(PipeWire%20%2F%20PulseAudio)-38bdf8.svg)](#requirements)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20macOS-38bdf8.svg)](#-downloads)
+[![Release](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/actions/workflows/release.yml/badge.svg)](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/actions/workflows/release.yml)
 [![Rust](https://img.shields.io/badge/Rust-1.80+-f97316.svg)](#requirements)
 
 **Ward-Beck Audio Tap** is a low-latency virtual audio patchbay, test point inserter, and live VU meter bridge daemon engineered for the **Ward-Beck Systems XTM-4 & POD-22 Broadcast Metering Ecosystem**.
 
 It allows Linux users to route desktop audio, YouTube, Spotify, DAWs, and media players directly into browser-based broadcast visualizers (such as [xtm.wbsps.ca](https://xtm.wbsps.ca)) with **zero microphone feedback risk**, **zero browser screen-sharing banners**, and sub-millisecond meter synchronization.
+
+---
+
+## ⬇️ Downloads
+
+| System | Latest release | Newest build (nightly) | Install |
+|---|---|---|---|
+| Linux x86_64 | [tar.gz](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-linux-x86_64.tar.gz) | [tar.gz](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/download/nightly/ward-beck-audio-tap-linux-x86_64.tar.gz) | `bash install.sh` |
+| Linux ARM64 (Raspberry Pi 4/5) | [tar.gz](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-linux-arm64.tar.gz) | [tar.gz](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/download/nightly/ward-beck-audio-tap-linux-arm64.tar.gz) | `bash install.sh` |
+| Windows 10/11 x64 | [zip](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-windows-x86_64.zip) | [zip](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/download/nightly/ward-beck-audio-tap-windows-x86_64.zip) | right-click `install.ps1` › Run with PowerShell |
+| macOS 14.2+ (Apple silicon + Intel) | [zip](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-macos-universal.zip) | [zip](https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/download/nightly/ward-beck-audio-tap-macos-universal.zip) | `bash install.sh` |
+
+All releases: <https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases>. Builds come from
+[`.github/workflows/release.yml`](.github/workflows/release.yml): every push to `main` refreshes *nightly*,
+every `v*` tag makes a release.
+
+> **Windows and macOS are in progress.** They install, run, serve the web app's API, MXL rings,
+> generators, AES67, SAP/NMOS/PTP/NTP and log everything, but system-audio capture
+> (WASAPI loopback / Core Audio process tap) is still being written.
+
+**Something wrong?** Every Tap logs what it does. Send the file from
+<http://127.0.0.1:8467/api/diagnostics/bundle> (report + recent problems + log). Log files:
+Linux `~/.local/state/ward-beck-audio-tap/tap.log`, macOS `~/Library/Logs/Ward-Beck Audio Tap/tap.log`,
+Windows `%LOCALAPPDATA%\Ward-Beck\Audio Tap\logs\tap.log`.
 
 ---
 
