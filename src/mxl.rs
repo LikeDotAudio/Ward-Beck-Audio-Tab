@@ -581,6 +581,20 @@ pub struct MxlFlow {
     bins: Mutex<Bins>,
     meter: Mutex<Meter>,
     write_lock: Mutex<()>,
+    /// Write head phase-locked to TAI (see `clock_position`). Off in unit tests, which
+    /// count frames from 0.
+    clock_locked: AtomicBool,
+}
+
+/// A writer that slips further than this from the clock is snapped back to it.
+const CLOCK_SLIP_MAX_S: f64 = 0.050;
+
+/// Ring position of the sample at TAI time `tai_ns`: MXL media time, (TAI × rate) mod length.
+/// With a 10 s ring the head crosses position 0 at every TAI second ending in 0, so the eye's
+/// spokes 0-9 land on the downbeat of each second.
+pub fn clock_position(tai_ns: u64, sample_rate: u32, buffer_length: usize) -> usize {
+    let index = (tai_ns as u128 * sample_rate as u128) / 1_000_000_000u128;
+    (index % buffer_length as u128) as usize
 }
 
 impl MxlFlow {
@@ -615,6 +629,7 @@ impl MxlFlow {
             flow_dir,
             data_size,
             write_head: AtomicUsize::new(0),
+            clock_locked: AtomicBool::new(!cfg!(test)),
             write_seq: AtomicU64::new(0),
             overrun_count: AtomicU32::new(0),
             underrun_count: AtomicU32::new(0),
@@ -726,6 +741,11 @@ impl MxlFlow {
         self.closed.store(true, Ordering::Release);
     }
 
+    /// Phase-lock the write head to TAI (on by default outside tests).
+    pub fn set_clock_locked(&self, on: bool) {
+        self.clock_locked.store(on, Ordering::Relaxed);
+    }
+
     pub fn write_head(&self) -> usize {
         self.write_head.load(Ordering::Acquire)
     }
@@ -801,8 +821,18 @@ impl MxlFlow {
         }
         let _w = self.write_lock.lock().unwrap();
         let maps = self.maps.read().unwrap();
-        let head = self.write_head.load(Ordering::Acquire);
+        let mut head = self.write_head.load(Ordering::Acquire);
         let buf_len = self.buffer_length;
+        if self.clock_locked.load(Ordering::Relaxed) {
+            // These n frames end now: they belong just behind the clock's ring position.
+            let now = clock_position(current_tai_ns(), self.sample_rate, buf_len);
+            let want = (now + buf_len - n % buf_len) % buf_len;
+            let slip = (head as i64 - want as i64).rem_euclid(buf_len as i64);
+            let slip = slip.min(buf_len as i64 - slip) as f64 / self.sample_rate as f64;
+            if slip > CLOCK_SLIP_MAX_S {
+                head = want;
+            }
+        }
         let chans = [&ch0[..n], &ch1[..n]];
         for (c, data) in chans.iter().enumerate().take(self.channel_count) {
             if head + n <= buf_len {
@@ -2131,4 +2161,20 @@ mod tests {
         e.stop();
         std::thread::sleep(Duration::from_millis(700));
     }
+
+    #[test]
+    fn the_write_head_is_phase_locked_to_tai() {
+        // 10 s ring at 48 kHz: TAI ...0.000 s is position 0, ...3.5 s is 3.5 × 48000.
+        assert_eq!(clock_position(1_700_000_000_000_000_000, 48000, 480_000), 0);
+        assert_eq!(clock_position(1_700_000_003_500_000_000, 48000, 480_000), 168_000);
+        let base = scratch("clock");
+        let f = MxlFlow::new(&base, "dom", "fl", "Flow", 48000, 2, 480_000, 256, "program");
+        f.set_clock_locked(true);
+        let ch = vec![0.0f64; 480];
+        f.write_frames(&ch, &ch);
+        let now = clock_position(current_tai_ns(), 48000, 480_000);
+        let off = (f.write_head() as i64 - now as i64).rem_euclid(480_000);
+        assert!(off.min(480_000 - off) < 2400, "head {} vs clock {}", f.write_head(), now);
+    }
+
 }
