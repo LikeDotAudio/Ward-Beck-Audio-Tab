@@ -169,6 +169,8 @@ struct MqttState {
     error: Option<String>,
     /// Built-in sniffer only: the runtime prompt when it can't hear the wire.
     fix: Option<Value>,
+    /// Built-in sniffer only: what changed, newest last (ptp_events).
+    events: std::collections::VecDeque<Value>,
     messages: u64,
     updated: Option<f64>,
 }
@@ -398,6 +400,7 @@ impl Registry {
                 g.insert("priority1".into(), c["priority1"].clone());
                 g.insert("sync_health".into(), c["sync_health"].clone());
                 g.insert("interface".into(), c["interface"].clone());
+                g.insert("ptp_offset".into(), c["ptp_offset"].clone());
                 Value::Object(g)
             })
             .collect();
@@ -427,11 +430,13 @@ impl Registry {
             m.insert("source".into(), json!("apk-ptp"));
             m.insert("groups".into(), json!([format!("{PTP_GROUP}:319"), format!("{PTP_GROUP}:320"), "gPTP 0x88F7"]));
             m.insert("fix".into(), self.mqtt.fix.clone().unwrap_or(Value::Null));
+            m.insert("events".into(), Value::Array(self.mqtt.events.iter().cloned().collect()));
         } else {
             m.insert("mode".into(), json!("passive"));
             m.insert("source".into(), json!(format!("mqtt://{}:{}", cfg.mqtt_host, cfg.mqtt_port)));
             m.insert("groups".into(), json!([cfg.ptp_topic]));
             m.insert("fix".into(), Value::Null);
+            m.insert("events".into(), json!([]));
         }
         m.insert("packets".into(), json!(self.mqtt.messages));
         m.insert("joined_interfaces".into(), json!([]));
@@ -1005,6 +1010,8 @@ pub fn parse_ptp_discovery(rows: &Value) -> Result<Vec<Value>, String> {
         c.insert("delay_req_count".into(), json!(mget("Delay_Req") + mget("Pdelay_Req")));
         c.insert("announce_count".into(), json!(mget("Announce")));
         c.insert("last_seen_text".into(), r.get("last_seen").cloned().unwrap_or(Value::Null));
+        // PTP minus this host's (NTP-disciplined) clock, from the sniffer (built-in only).
+        c.insert("ptp_offset".into(), r.get("ptp_offset").filter(|v| v.is_object()).cloned().unwrap_or(Value::Null));
         // The NIC the clock was heard on (built-in sniffer only).
         c.insert("interface".into(), r.get("interface").filter(|v| py::truthy(v)).cloned().unwrap_or(Value::Null));
         out.push(Value::Object(c));
@@ -1143,6 +1150,7 @@ pub fn apk_rows(snapshot: &Value, vendor: &dyn Fn(&str) -> Option<String>) -> Va
                         "sync_health": c["diagnostics"]["verdict"],
                         "messages": c["messages"],
                         "interface": c["interface"],
+                        "ptp_offset": ptp_offset(&c["diagnostics"]),
                         "_row_state": "online",
                     })
                 })
@@ -1151,6 +1159,80 @@ pub fn apk_rows(snapshot: &Value, vendor: &dyn Fn(&str) -> Option<String>) -> Va
         .unwrap_or_default();
     Value::Array(rows)
 }
+
+/// PTP time minus this host's clock (which NTP sets), from the sniffer's apparent
+/// offset: that is (host - master) plus a few us of network and capture delay, so
+/// PTP - NTP is its negation. Null until a Sync/Follow_Up pair has been timed.
+pub fn ptp_offset(diag: &Value) -> Value {
+    let Some(apparent) = diag["apparent_offset_ns"].as_f64() else {
+        return Value::Null;
+    };
+    json!({
+        "ptp_minus_ntp_ns": -apparent,
+        "spread_ns": diag["offset_spread_ns"],
+        "drift_ns_per_s": diag["drift_ns_per_s"],
+        "samples": diag["offset_samples"],
+        "ptp_timescale": diag["ptp_timescale"],
+        "utc_offset_applied": diag["utc_offset_applied"],
+    })
+}
+
+/// What changed between two clock lists: clocks heard / gone, leaders elected,
+/// contested / settled, class or priority changes. Each event: {kind, text, port, domain}.
+pub fn ptp_events(prev: &[Value], now: &[Value]) -> Vec<Value> {
+    let key = |c: &Value| {
+        format!("{}|{}|{}|{}", c["interface"].as_str().unwrap_or(""), c["version"], py::str_of(&c["domain"]), c["clock_identity"].as_str().unwrap_or(""))
+    };
+    let name = |c: &Value| {
+        let port = c["interface"].as_str().map(|p| format!(" on {p}")).unwrap_or_default();
+        format!("PTPv{} domain {}{port}", c["version"], py::str_of(&c["domain"]))
+    };
+    let ev = |kind: &str, text: String, c: &Value| {
+        json!({"kind": kind, "text": text, "port": c["interface"], "domain": c["domain"], "version": c["version"]})
+    };
+    let old: std::collections::HashMap<String, &Value> = prev.iter().map(|c| (key(c), c)).collect();
+    let new: std::collections::HashMap<String, &Value> = now.iter().map(|c| (key(c), c)).collect();
+    let mut out = Vec::new();
+    for c in now {
+        let id = c["clock_identity"].as_str().unwrap_or("");
+        match old.get(&key(c)) {
+            None => {
+                out.push(ev("heard", format!("{id} heard ({}, {})", name(c), c["network"].as_str().unwrap_or("")), c));
+                if c["is_grandmaster"] == true {
+                    out.push(ev("leader", format!("{id} leads {}", name(c)), c));
+                }
+            }
+            Some(p) => {
+                if c["is_grandmaster"] == true && p["is_grandmaster"] != true {
+                    out.push(ev("leader", format!("{id} became leader of {}", name(c)), c));
+                }
+                if c["is_grandmaster"] != true && p["is_grandmaster"] == true {
+                    out.push(ev("follower", format!("{id} stopped leading {}", name(c)), c));
+                }
+                if c["sync_health"] == "contested" && p["sync_health"] != "contested" {
+                    out.push(ev("contested", format!("{id}: {} is contested (two leaders)", name(c)), c));
+                }
+                if p["sync_health"] == "contested" && c["sync_health"] != "contested" {
+                    out.push(ev("settled", format!("{id}: {} settled", name(c)), c));
+                }
+                for (k, label) in [("priority1", "priority1"), ("clock_class", "class")] {
+                    if !p[k].is_null() && !c[k].is_null() && p[k] != c[k] {
+                        out.push(ev("changed", format!("{id} {label} {} → {}", p[k], c[k]), c));
+                    }
+                }
+            }
+        }
+    }
+    for c in prev {
+        if !new.contains_key(&key(c)) {
+            out.push(ev("gone", format!("{} gone ({})", c["clock_identity"].as_str().unwrap_or(""), name(c)), c));
+        }
+    }
+    out
+}
+
+/// Most recent PTP events kept for the Timing tab.
+const PTP_EVENTS_MAX: usize = 200;
 
 /// The runtime prompt for a sniffer that can't open its sockets.
 pub fn apk_fix(problems: &[String], udp_blocked: bool, exe: &str) -> Option<Value> {
@@ -1259,6 +1341,14 @@ fn run_ptp_apk(stop: Arc<AtomicBool>) {
                 let blocked = snap["counts"]["udp_blocked"].as_bool().unwrap_or(false);
                 let rows = parse_ptp_discovery(&apk_rows(&snap, &|id| vendors.vendor(id))).unwrap_or_default();
                 let mut r = registry();
+                let at = now_f64();
+                for mut e in ptp_events(&r.mqtt_rows, &rows) {
+                    e["t"] = json!(at);
+                    r.mqtt.events.push_back(e);
+                }
+                while r.mqtt.events.len() > PTP_EVENTS_MAX {
+                    r.mqtt.events.pop_front();
+                }
                 r.mqtt_rows = rows;
                 r.mqtt.messages = counts.total;
                 r.mqtt.updated = Some(now_f64());
@@ -1959,6 +2049,30 @@ mod tests {
     }
 
     #[test]
+    fn ptp_events_report_what_changed() {
+        let gm = |id: &str, lead: bool, health: &str, p1: i64| {
+            json!({"clock_identity": id, "interface": "enp12s0", "version": 2, "domain": 44, "network": "aes67",
+                   "is_grandmaster": lead, "sync_health": health, "priority1": p1, "clock_class": 6})
+        };
+        let a = vec![gm("A", true, "stable", 20)];
+        let ev = ptp_events(&[], &a);
+        assert_eq!(ev.iter().map(|e| e["kind"].as_str().unwrap()).collect::<Vec<_>>(), ["heard", "leader"]);
+        assert_eq!(ev[1]["text"], "A leads PTPv2 domain 44 on enp12s0");
+        let b = vec![gm("A", true, "contested", 10), gm("B", true, "contested", 20)];
+        let kinds: Vec<String> = ptp_events(&a, &b).iter().map(|e| e["kind"].as_str().unwrap().to_string()).collect();
+        assert_eq!(kinds, ["contested", "changed", "heard", "leader"]);
+        assert_eq!(ptp_events(&b, &[])[0]["kind"], "gone");
+        assert!(ptp_events(&a, &a).is_empty());
+    }
+
+    #[test]
+    fn ptp_offset_is_ptp_minus_host() {
+        let o = ptp_offset(&json!({"apparent_offset_ns": 1500, "offset_spread_ns": 20.0, "offset_samples": 9}));
+        assert_eq!(o["ptp_minus_ntp_ns"], -1500.0);
+        assert_eq!(ptp_offset(&json!({"apparent_offset_ns": null})), Value::Null);
+    }
+
+    #[test]
     fn apk_rows_feed_the_discovery_parser() {
         let snap = json!({"clocks": [
             {"clock_id": "00:1d:c1:ff:fe:0e:10:64", "role": "grandmaster", "variant": "PTPv2", "domain": 0,
@@ -2002,7 +2116,7 @@ mod tests {
         assert_eq!(
             keys,
             vec![
-                "listening", "error", "mode", "source", "groups", "fix", "packets", "joined_interfaces", "join_errors",
+                "listening", "error", "mode", "source", "groups", "fix", "events", "packets", "joined_interfaces", "join_errors",
                 "bound_ports", "updated_age_s", "clocks", "grandmasters"
             ]
         );
@@ -2047,7 +2161,7 @@ mod tests {
                 "clock_identity", "version", "variant", "domain", "source_ip", "network", "vendor",
                 "grandmaster_identity", "is_grandmaster", "priority1", "priority2", "clock_class", "clock_accuracy",
                 "steps_removed", "time_source", "sync_health", "online", "sync_count", "follow_up_count",
-                "delay_req_count", "announce_count", "last_seen_text", "interface"
+                "delay_req_count", "announce_count", "last_seen_text", "ptp_offset", "interface"
             ]
         );
     }

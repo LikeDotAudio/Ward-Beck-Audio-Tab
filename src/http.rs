@@ -326,6 +326,7 @@ fn do_get(path: &str, query: &str) -> RouteResult {
         }
         "/api/aoip/multicast" => json_reply(&aoip::snapshot()),
         "/api/aes67" => json_reply(&crate::aes67::status()),
+        "/api/ntp" => json_reply(&crate::ntp::status()),
         "/api/nmos" => {
             let _g = state_lock();
             json_reply(&json!({"status": "ok", "count": nmos::nmos_count(), "nodes": nmos::nmos_nodes()}))
