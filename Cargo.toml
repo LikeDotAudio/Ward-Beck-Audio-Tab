@@ -19,6 +19,9 @@ libc = "0.2"
 signal-hook = "0.3"
 ureq = { version = "2", default-features = false }
 wbs-generators = { path = "Generators/rust" }
+# The APK PTP sniffer (PTPv1 + PTPv2 + gPTP, UDP 319/320 + raw Ethernet), submodule PTP/.
+apkaudio-ptp = { path = "PTP/SRC" }
+apkaudio-maclookup = { git = "https://github.com/LikeDotAudio/APK.plugin.protocol.MAC_LOOKUP", tag = "maclookup-v2.5.0" }
 
 [profile.release]
 opt-level = 3

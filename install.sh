@@ -21,6 +21,17 @@ systemctl --user stop ward-beck-audio-tab.service 2>/dev/null || true
 install -m 755 "$HERE/target/release/ward-beck-audio-tab" "$BIN_DIR/ward-beck-audio-tab"
 echo "✔ Executable installed to: $BIN_DIR/ward-beck-audio-tab"
 
+# PTP sniffer (apk-ptp): UDP 319/320 and gPTP raw Ethernet need two capabilities.
+# A new binary loses them, so grant them again on every install. Without a terminal
+# to ask for the password, the Timing tab asks instead.
+CAPS="cap_net_raw,cap_net_bind_service+ep"
+if sudo -n setcap "$CAPS" "$BIN_DIR/ward-beck-audio-tab" 2>/dev/null \
+   || { [ -t 0 ] && sudo setcap "$CAPS" "$BIN_DIR/ward-beck-audio-tab"; }; then
+  echo "✔ PTP capabilities granted"
+else
+  echo "• PTP capabilities not granted (no sudo); the Timing tab will show the command"
+fi
+
 # 2. Install systemd user service
 mkdir -p "$SERVICE_DIR"
 cp "$HERE/ward-beck-audio-tab.service" "$SERVICE_DIR/ward-beck-audio-tab.service"

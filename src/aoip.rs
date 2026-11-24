@@ -15,16 +15,16 @@
 //! Nothing here is simulated: if a socket cannot bind or join, the listener
 //! reports listening=false with the error text and an empty list.
 //!
-//! PTP is passive by default: rather than binding 319/320 (privileged ports
-//! that the apk-ptp / clock containers already own), it subscribes read-only
-//! to the retained MQTT topic those containers publish
-//! (APK.audio/System/Gui/Discovered/ptp). Nothing is bound, joined or sent
-//! on the PTP network. Set AOIP_PTP_MODE=sockets to listen on the wire instead.
+//! PTP comes from the APK PTP sniffer built in (crate apkaudio-ptp, submodule PTP/):
+//! PTPv1 + PTPv2 on UDP 319/320 and gPTP on raw Ethernet, listen-only. It needs
+//! cap_net_bind_service + cap_net_raw on this binary; without them the snapshot
+//! carries a `fix` prompt. AOIP_PTP_MODE=mqtt reads the apk-ptp container's topic
+//! instead, AOIP_PTP_MODE=sockets the old built-in 319/320 listener.
 //!
 //! Environment:
 //!   AOIP_IFACE      optional IPv4 address of the interface to join on
 //!                   (default: join on every interface, reported as 0.0.0.0).
-//!   AOIP_PTP_MODE   "mqtt" (default, passive) or "sockets" (bind 319/320).
+//!   AOIP_PTP_MODE   "apk" (default, built-in sniffer), "mqtt" or "sockets".
 //!   MQTT_HOST/PORT  broker for the passive PTP source (127.0.0.1:1883).
 //!   AOIP_PTP_TOPIC  topic to read (APK.audio/System/Gui/Discovered/ptp).
 
@@ -66,7 +66,7 @@ struct Config {
 fn config() -> &'static Config {
     static C: OnceLock<Config> = OnceLock::new();
     C.get_or_init(|| Config {
-        ptp_mode: std::env::var("AOIP_PTP_MODE").unwrap_or_else(|_| "mqtt".into()).trim().to_lowercase(),
+        ptp_mode: std::env::var("AOIP_PTP_MODE").unwrap_or_else(|_| "apk".into()).trim().to_lowercase(),
         mqtt_host: std::env::var("MQTT_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
         mqtt_port: std::env::var("MQTT_PORT").ok().and_then(|v| py::parse_int(&v)).map(|v| v as u16).unwrap_or(1883),
         ptp_topic: std::env::var("AOIP_PTP_TOPIC").unwrap_or_else(|_| "APK.audio/System/Gui/Discovered/ptp".into()),
@@ -75,6 +75,10 @@ fn config() -> &'static Config {
 
 fn sockets_mode() -> bool {
     config().ptp_mode == "sockets"
+}
+
+fn apk_mode() -> bool {
+    !matches!(config().ptp_mode.as_str(), "sockets" | "mqtt")
 }
 
 fn iface() -> String {
@@ -163,6 +167,8 @@ impl<K: PartialEq, V> OrderedMap<K, V> {
 struct MqttState {
     connected: bool,
     error: Option<String>,
+    /// Built-in sniffer only: the runtime prompt when it can't hear the wire.
+    fix: Option<Value>,
     messages: u64,
     updated: Option<f64>,
 }
@@ -414,9 +420,18 @@ impl Registry {
         let mut m = Map::new();
         m.insert("listening".into(), json!(self.mqtt.connected));
         m.insert("error".into(), json!(self.mqtt.error));
-        m.insert("mode".into(), json!("passive"));
-        m.insert("source".into(), json!(format!("mqtt://{}:{}", cfg.mqtt_host, cfg.mqtt_port)));
-        m.insert("groups".into(), json!([cfg.ptp_topic]));
+        // A pinned mode (tests) means the MQTT source; otherwise follow AOIP_PTP_MODE.
+        if self.ptp_sockets_override.is_none() && apk_mode() {
+            m.insert("mode".into(), json!("apk-ptp"));
+            m.insert("source".into(), json!("apk-ptp"));
+            m.insert("groups".into(), json!([format!("{PTP_GROUP}:319"), format!("{PTP_GROUP}:320"), "gPTP 0x88F7"]));
+            m.insert("fix".into(), self.mqtt.fix.clone().unwrap_or(Value::Null));
+        } else {
+            m.insert("mode".into(), json!("passive"));
+            m.insert("source".into(), json!(format!("mqtt://{}:{}", cfg.mqtt_host, cfg.mqtt_port)));
+            m.insert("groups".into(), json!([cfg.ptp_topic]));
+            m.insert("fix".into(), Value::Null);
+        }
         m.insert("packets".into(), json!(self.mqtt.messages));
         m.insert("joined_interfaces".into(), json!([]));
         m.insert("join_errors".into(), json!([]));
@@ -1090,6 +1105,167 @@ fn run_ptp_mqtt(stop: Arc<AtomicBool>) {
 }
 
 // ---------------------------------------------------------------------------
+// PTP: the APK sniffer (apkaudio-ptp), built in
+// ---------------------------------------------------------------------------
+
+/// Clocks not heard for this long leave the table (apk-ptp's clock_timeout_s).
+const APK_CLOCK_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// apk-ptp's snapshot_json clocks -> the discovery rows parse_ptp_discovery reads.
+pub fn apk_rows(snapshot: &Value, vendor: &dyn Fn(&str) -> Option<String>) -> Value {
+    let rows: Vec<Value> = snapshot["clocks"]
+        .as_array()
+        .map(|cs| {
+            cs.iter()
+                .map(|c| {
+                    let id = c["clock_id"].as_str().unwrap_or("");
+                    let src = c["source"].as_str().unwrap_or("");
+                    // UDP clocks carry the sender IP; gPTP (Layer 2) only a MAC.
+                    let ip = src.parse::<Ipv4Addr>().ok().map(|_| json!(src)).unwrap_or(Value::Null);
+                    json!({
+                        "clock_id": id,
+                        "variant": c["variant"],
+                        "domain": c["domain"],
+                        "subdomain": c["subdomain"],
+                        "vendor": vendor(id),
+                        "ip": ip,
+                        "grandmaster": c["grandmaster"].as_str().unwrap_or("-"),
+                        "role": c["role"],
+                        "priority1": c["priority1"],
+                        "priority2": c["priority2"],
+                        "gm_class": c["gm_class"],
+                        "gm_accuracy": c["gm_accuracy"],
+                        "steps_removed": c["steps_removed"],
+                        "time_source": c["time_source"],
+                        "sync_health": c["diagnostics"]["verdict"],
+                        "messages": c["messages"],
+                        "_row_state": "online",
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Value::Array(rows)
+}
+
+/// The runtime prompt for a sniffer that can't open its sockets.
+pub fn apk_fix(problems: &[String], udp_blocked: bool, exe: &str) -> Option<Value> {
+    let perm = problems.iter().any(|p| {
+        let l = p.to_lowercase();
+        l.contains("permission") || l.contains("not permitted") || l.contains("cap_net")
+    });
+    if perm {
+        return Some(json!({
+            "title": "Let the TAP listen for PTP clocks",
+            "why": "PTP uses UDP ports 319/320 and gPTP raw Ethernet, which need two capabilities on the TAP program. \
+                    Granting them needs your password, so run this in a terminal.",
+            "options": [
+                {"label": "Grant and restart", "note": "kept until the TAP is reinstalled (install.sh grants it again)",
+                 "command": format!("sudo setcap cap_net_raw,cap_net_bind_service+ep {exe} && systemctl --user restart ward-beck-audio-tab")},
+            ],
+        }));
+    }
+    if udp_blocked {
+        return Some(json!({
+            "title": "Allow PTP through the firewall",
+            "why": "gPTP arrives on raw Ethernet but nothing reaches UDP 319/320: the host firewall is dropping PTPv1/PTPv2.",
+            "options": [
+                {"label": "This session only", "note": "gone at the next reboot",
+                 "command": "sudo iptables -I INPUT -p udp -d 224.0.1.129 --dport 319:320 -j ACCEPT"},
+                {"label": "Permanently", "note": "saved as a UFW rule",
+                 "command": "sudo ufw allow proto udp to 224.0.1.129 port 319:320"},
+            ],
+        }));
+    }
+    None
+}
+
+/// One short line for the status bar; the long how-to lives in the fix prompt.
+fn apk_error(problems: &[String], has_fix: bool) -> Option<String> {
+    if problems.is_empty() {
+        None
+    } else if has_fix {
+        Some("no permission to listen for PTP (UDP 319/320, raw Ethernet)".into())
+    } else {
+        Some(problems.iter().map(|p| p.lines().next().unwrap_or("")).collect::<Vec<_>>().join("; "))
+    }
+}
+
+fn run_ptp_apk(stop: Arc<AtomicBool>) {
+    use apkaudio_ptp::diagnostics::Diagnostics;
+    use apkaudio_ptp::flow::FlowTracker;
+    use apkaudio_ptp::monitor::{self, ClockTable, Observation, Transports};
+    use apkaudio_ptp::report::{snapshot_json, Counters};
+
+    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "ward-beck-audio-tab".into());
+    let vendors = apkaudio_maclookup::MacVendors::start();
+    while !stop.load(Ordering::Relaxed) {
+        let transports = Transports::open();
+        let open = transports.any_open();
+        {
+            let mut r = registry();
+            r.mqtt.connected = open;
+            r.mqtt.fix = apk_fix(&transports.problems, false, &exe);
+            r.mqtt.error = apk_error(&transports.problems, r.mqtt.fix.is_some());
+        }
+        if !open {
+            // Nothing to listen with; try again later (a setcap + restart is the usual cure).
+            py::wait(&stop, 10.0);
+            continue;
+        }
+        let mut tracker = FlowTracker::default();
+        let mut table = ClockTable::default();
+        let mut diagnostics = Diagnostics::default();
+        let mut counts = Counters::default();
+        let mut last = Instant::now();
+        let started = Instant::now();
+        monitor::run_paced(
+            &transports,
+            &mut tracker,
+            |obs| {
+                if let Some(obs) = obs {
+                    counts.total += 1;
+                    match obs {
+                        Observation::V2(msg, _, meta) => {
+                            if meta.port.is_some() { counts.udp += 1 } else { counts.l2 += 1 }
+                            table.record(&msg, &meta);
+                            diagnostics.observe(&msg, &meta);
+                        }
+                        Observation::V1(msg, meta) => {
+                            counts.udp += 1;
+                            table.record_v1(&msg, &meta);
+                        }
+                        Observation::Undecodable { .. } => counts.undecodable += 1,
+                    }
+                    return;
+                }
+                if last.elapsed() < Duration::from_secs(1) {
+                    return;
+                }
+                last = Instant::now();
+                table.clocks.retain(|_, c| c.last_seen.elapsed() < APK_CLOCK_TIMEOUT);
+                let snap: Value = serde_json::from_str(&snapshot_json(
+                    &table,
+                    &diagnostics,
+                    &transports,
+                    &counts,
+                    started.elapsed().as_secs_f64(),
+                ))
+                .unwrap_or(Value::Null);
+                let blocked = snap["counts"]["udp_blocked"].as_bool().unwrap_or(false);
+                let rows = parse_ptp_discovery(&apk_rows(&snap, &|id| vendors.vendor(id))).unwrap_or_default();
+                let mut r = registry();
+                r.mqtt_rows = rows;
+                r.mqtt.messages = counts.total;
+                r.mqtt.updated = Some(now_f64());
+                r.mqtt.fix = apk_fix(&transports.problems, blocked, &exe);
+            },
+            || stop.load(Ordering::Relaxed),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SIP
 // ---------------------------------------------------------------------------
 
@@ -1331,7 +1507,9 @@ pub fn start(stop: Arc<AtomicBool>) {
         let stop = stop.clone();
         let _ = std::thread::Builder::new().name(name.into()).spawn(move || run_listener(groups, port, kind, stop));
     }
-    if !sockets_mode() {
+    if apk_mode() {
+        let _ = std::thread::Builder::new().name("aoip-ptp-apk".into()).spawn(move || run_ptp_apk(stop));
+    } else if !sockets_mode() {
         let stop = stop.clone();
         let _ = std::thread::Builder::new().name("aoip-ptp-mqtt".into()).spawn(move || run_ptp_mqtt(stop));
     }
@@ -1722,6 +1900,37 @@ mod tests {
     }
 
     #[test]
+    fn apk_rows_feed_the_discovery_parser() {
+        let snap = json!({"clocks": [
+            {"clock_id": "00:1d:c1:ff:fe:0e:10:64", "role": "grandmaster", "variant": "PTPv2", "domain": 0,
+             "source": "44.44.44.12", "grandmaster": "00:1d:c1:ff:fe:0e:10:64", "gm_class": 6, "gm_accuracy": "within 100 ns",
+             "time_source": "GPS", "steps_removed": 0, "priority1": 100, "priority2": 128, "subdomain": null,
+             "messages": "Sync ×8, Announce ×2", "diagnostics": {"verdict": "stable"}},
+            {"clock_id": "00:0a:92:ff:fe:01:56:a3", "role": "clock", "variant": "gPTP", "domain": 0,
+             "source": "00:0A:92:01:56:A3", "grandmaster": null, "subdomain": null, "messages": "Pdelay_Req ×3",
+             "diagnostics": {"verdict": "unknown"}}
+        ]});
+        let rows = parse_ptp_discovery(&apk_rows(&snap, &|_| Some("Audinate".into()))).unwrap();
+        assert_eq!(rows[0]["clock_identity"], "00-1d-c1-ff-fe-0e-10-64");
+        assert_eq!(rows[0]["is_grandmaster"], true);
+        assert_eq!(rows[0]["source_ip"], "44.44.44.12");
+        assert_eq!(rows[0]["sync_count"], 8);
+        assert_eq!(rows[0]["online"], true);
+        assert_eq!(rows[1]["source_ip"], Value::Null); // gPTP: a MAC, not an IP
+        assert_eq!(rows[1]["network"], "avb (gPTP)");
+        assert_eq!(rows[1]["grandmaster_identity"], Value::Null);
+    }
+
+    #[test]
+    fn apk_fix_asks_for_capabilities_then_the_firewall() {
+        let denied = vec!["UDP port 319 unavailable (permission denied — PTP needs privileged ports)".to_string()];
+        let f = apk_fix(&denied, false, "/x/tap").unwrap();
+        assert!(f["options"][0]["command"].as_str().unwrap().contains("setcap cap_net_raw,cap_net_bind_service+ep /x/tap"));
+        assert!(apk_fix(&[], true, "/x/tap").unwrap()["title"].as_str().unwrap().contains("firewall"));
+        assert!(apk_fix(&[], false, "/x/tap").is_none());
+    }
+
+    #[test]
     fn test_mqtt_snapshot_contract() {
         let mut r = Registry::new();
         r.set_ptp_sockets_mode(false);
@@ -1734,7 +1943,7 @@ mod tests {
         assert_eq!(
             keys,
             vec![
-                "listening", "error", "mode", "source", "groups", "packets", "joined_interfaces", "join_errors",
+                "listening", "error", "mode", "source", "groups", "fix", "packets", "joined_interfaces", "join_errors",
                 "bound_ports", "updated_age_s", "clocks", "grandmasters"
             ]
         );
