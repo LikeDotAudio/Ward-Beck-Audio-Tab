@@ -616,8 +616,7 @@ pub(crate) fn run_mut(args: &[&str]) -> (i32, String, String) {
 /// Signal one of the daemon's own children (meter parecs, tone / Bit Buddy pacat).
 /// Always real, also in dry run: the daemon must clean up what it started.
 fn kill_pid(pid: u32, sig: i32) -> bool {
-    // SAFETY: plain kill(2) on a pid.
-    unsafe { libc::kill(pid as libc::pid_t, sig) == 0 }
+    crate::sys::kill(pid, sig)
 }
 
 /// Python _kill_pid: SIGTERM, True if delivered. Used by Reset All on *other*
@@ -627,7 +626,7 @@ fn _kill_pid(pid: u32) -> bool {
         println!("[DRY RUN] kill -15 {pid}");
         return false;
     }
-    kill_pid(pid, libc::SIGTERM)
+    kill_pid(pid, crate::sys::SIGTERM)
 }
 
 /// `pactl list short ...` style tab-split lines.
@@ -946,12 +945,11 @@ pub fn source_meter_worker(src_name: String) {
                 let mut g = d();
                 if let Some(e) = g.source_procs.iter_mut().find(|(n, s)| *n == src_name && s.pid == pid) {
                     if e.1.alive {
-                        // SAFETY: our own child, not yet reaped.
-                        unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+                        crate::sys::kill(pid, crate::sys::SIGTERM);
                     }
                     e.1.alive = false;
                 } else {
-                    unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+                    crate::sys::kill(pid, crate::sys::SIGTERM);
                 }
             }
             let _ = child.wait();
@@ -1111,7 +1109,7 @@ pub fn abandon_ship() {
         let mut g = d();
         for (_, slot) in g.source_procs.iter_mut() {
             if slot.alive {
-                kill_pid(slot.pid, libc::SIGTERM);
+                kill_pid(slot.pid, crate::sys::SIGTERM);
             }
         }
         g.source_procs.clear();
@@ -1238,7 +1236,7 @@ pub fn reset_all() -> Value {
     }
 
     // Stray processes: pw-loopback cards and orphaned stream helpers
-    let uid = unsafe { libc::getuid() }.to_string();
+    let uid = crate::sys::uid();
     let (_, ps_out, _) = run_cmd(&["ps", "-u", &uid, "-o", "pid=,ppid=,args="]);
     for (pid, args) in stray_processes(&parse_ps(&ps_out), me) {
         if _kill_pid(pid) {
@@ -1262,7 +1260,7 @@ pub fn reset_all() -> Value {
             if let Some(i) = g.source_procs.iter().position(|(n, _)| *n == name) {
                 let (_, slot) = g.source_procs.remove(i);
                 if slot.alive {
-                    kill_pid(slot.pid, libc::SIGTERM);
+                    kill_pid(slot.pid, crate::sys::SIGTERM);
                 }
             }
             g.source_meters.shift_remove(&name);
@@ -1462,8 +1460,7 @@ pub fn meter_reader_loop() {
                     ];
                 }
             }
-            // SAFETY: our own child, not yet reaped.
-            unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
+            crate::sys::kill(child.id(), crate::sys::SIGTERM);
             let _ = child.wait();
         }
         thread::sleep(Duration::from_millis(500));
@@ -1475,7 +1472,6 @@ pub fn meter_reader_loop() {
 // ---------------------------------------------------------------------------
 
 fn spawn_pacat(rate: i64, stream_name: &str) -> std::io::Result<std::process::Child> {
-    use std::os::unix::process::CommandExt;
     let mut cmd = Command::new("pacat");
     cmd.args([
         "--playback".to_string(),
@@ -1489,20 +1485,14 @@ fn spawn_pacat(rate: i64, stream_name: &str) -> std::io::Result<std::process::Ch
     .stdin(Stdio::piped())
     .stdout(Stdio::null())
     .stderr(Stdio::null());
-    // SAFETY: setsid is async-signal-safe (Python: preexec_fn=os.setsid).
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::setsid();
-            Ok(())
-        });
-    }
+    crate::sys::new_session(&mut cmd);
     cmd.spawn()
 }
 
 /// Python Popen.terminate(); Popen.kill().
 fn term_kill(pid: u32) {
-    kill_pid(pid, libc::SIGTERM);
-    kill_pid(pid, libc::SIGKILL);
+    kill_pid(pid, crate::sys::SIGTERM);
+    kill_pid(pid, crate::sys::SIGKILL);
 }
 
 /// POST /api/test_tone start (Python start_test_tone(freq): int(freq) after the stop).
@@ -1579,7 +1569,7 @@ fn tone_stream_worker(freq: i64) {
     {
         let mut g = d();
         if g.tone_pid == Some(pid) {
-            kill_pid(pid, libc::SIGTERM);
+            kill_pid(pid, crate::sys::SIGTERM);
             g.tone_pid = None;
         }
     }
@@ -1712,7 +1702,7 @@ fn bitbuddy_worker() {
     {
         let mut g = d();
         if g.bb_pid == Some(pid) {
-            kill_pid(pid, libc::SIGTERM);
+            kill_pid(pid, crate::sys::SIGTERM);
             g.bb_pid = None;
         }
     }

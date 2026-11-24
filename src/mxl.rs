@@ -16,6 +16,7 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
+#[cfg(target_os = "linux")]
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -1125,9 +1126,7 @@ fn alive(slot: &Mutex<Option<JoinHandle<()>>>) -> bool {
 }
 
 fn terminate(child: &Child) {
-    unsafe {
-        libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
-    }
+    crate::sys::kill(child.id(), crate::sys::SIGTERM);
 }
 
 /// SIGTERM, then reap (SIGKILL after 1 s) so no zombie parec is left behind.
@@ -1157,9 +1156,7 @@ fn sleep_until(start: Instant, k: u64, interval: f64) {
 
 fn release_locks(fds: &mut Vec<File>) {
     for f in fds.drain(..) {
-        unsafe {
-            libc::flock(f.as_raw_fd(), libc::LOCK_UN);
-        }
+        crate::sys::unlock(&f);
     }
 }
 
@@ -1385,7 +1382,7 @@ impl MxlEngine {
         // Convenience symlink: <base>/wbs-test-signals -> domain-wbs-test-signals
         let symlink_path = join(base, "wbs-test-signals");
         if fs::metadata(&symlink_path).is_err() {
-            let _ = std::os::unix::fs::symlink(WBS_TEST_SIGNALS_DOMAIN_DIR, &symlink_path);
+            let _ = crate::sys::symlink(WBS_TEST_SIGNALS_DOMAIN_DIR, &symlink_path);
         }
 
         let mut targets: Vec<(String, Value, Value)> =
@@ -1450,8 +1447,7 @@ impl MxlEngine {
                 let _ = fs::write(&data_file, create_mxl_data_header(&flw.uuid, 2, 48000, 480, TEST_SIGNAL_FRAMES as u32));
                 let _ = fs::write(flw_dir.join("channels"), &audio);
                 if let Ok(f) = OpenOptions::new().read(true).write(true).open(&data_file) {
-                    let r = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-                    if r == 0 {
+                    if crate::sys::try_lock_exclusive(&f) {
                         fds.push(f);
                     }
                 }

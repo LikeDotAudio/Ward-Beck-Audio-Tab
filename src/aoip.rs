@@ -1464,7 +1464,7 @@ fn open_socket(groups: &[&str], port: u16) -> Result<(UdpSocket, Vec<String>, Ve
     use socket2::{Domain, InterfaceIndexOrAddress, Protocol, SockAddr, Socket, Type};
     let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     sock.set_reuse_address(true)?;
-    let _ = sock.set_reuse_port(true);
+    crate::sys::reuse_port(&sock);
     sock.bind(&SockAddr::from(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port))))?;
     let ifc = iface();
     let mut joined = Vec::new();

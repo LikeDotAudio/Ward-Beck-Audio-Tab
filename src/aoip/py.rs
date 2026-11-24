@@ -260,6 +260,21 @@ pub fn fsum_neumaier<I: IntoIterator<Item = f64>>(it: I) -> f64 {
 
 /// Python exception class name for an OSError with this errno.
 pub fn exc_class(e: &io::Error) -> &'static str {
+    #[cfg(windows)]
+    return match e.kind() {
+        io::ErrorKind::PermissionDenied => "PermissionError",
+        io::ErrorKind::ConnectionRefused => "ConnectionRefusedError",
+        io::ErrorKind::ConnectionReset => "ConnectionResetError",
+        io::ErrorKind::ConnectionAborted => "ConnectionAbortedError",
+        io::ErrorKind::BrokenPipe => "BrokenPipeError",
+        io::ErrorKind::TimedOut => "TimeoutError",
+        io::ErrorKind::NotFound => "FileNotFoundError",
+        io::ErrorKind::AlreadyExists => "FileExistsError",
+        io::ErrorKind::Interrupted => "InterruptedError",
+        io::ErrorKind::WouldBlock => "BlockingIOError",
+        _ => "OSError",
+    };
+    #[cfg(unix)]
     match e.raw_os_error() {
         Some(libc::EPERM) | Some(libc::EACCES) => "PermissionError",
         Some(libc::ECONNREFUSED) => "ConnectionRefusedError",
@@ -313,6 +328,13 @@ pub fn is_timeout(e: &io::Error) -> bool {
 }
 
 /// socket.if_nameindex(): [(index, name)].
+#[cfg(windows)]
+pub fn if_nameindex() -> Vec<(u32, String)> {
+    crate::sys::interfaces()
+}
+
+/// socket.if_nameindex(): [(index, name)].
+#[cfg(unix)]
 pub fn if_nameindex() -> Vec<(u32, String)> {
     let mut out = Vec::new();
     unsafe {
@@ -331,11 +353,27 @@ pub fn if_nameindex() -> Vec<(u32, String)> {
     out
 }
 
+#[cfg(unix)]
 extern "C" {
     fn inet_ntop(af: libc::c_int, src: *const libc::c_void, dst: *mut libc::c_char, size: libc::socklen_t) -> *const libc::c_char;
 }
 
 /// socket.inet_ntop for a 4- or 16-byte address.
+#[cfg(windows)]
+pub fn ntop(raw: &[u8]) -> String {
+    match raw.len() {
+        4 => std::net::Ipv4Addr::new(raw[0], raw[1], raw[2], raw[3]).to_string(),
+        16 => {
+            let mut b = [0u8; 16];
+            b.copy_from_slice(raw);
+            std::net::Ipv6Addr::from(b).to_string()
+        }
+        _ => String::new(),
+    }
+}
+
+/// socket.inet_ntop for a 4- or 16-byte address.
+#[cfg(unix)]
 pub fn ntop(raw: &[u8]) -> String {
     let (af, len) = if raw.len() == 16 { (libc::AF_INET6, 16) } else { (libc::AF_INET, 4) };
     let mut buf = [0 as libc::c_char; 64];

@@ -362,9 +362,7 @@ impl TestPoint {
     fn stop(&self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(pid) = *lock(&self.child_pid) {
-            unsafe {
-                libc::kill(pid as libc::pid_t, libc::SIGTERM);
-            }
+            crate::sys::kill(pid, crate::sys::SIGTERM);
         }
         let h = lock(&self.thread).take();
         if let Some(h) = h {
@@ -444,9 +442,7 @@ impl TestPoint {
             })?;
         *lock(&self.child_pid) = Some(child.id());
         if self.stopped() {
-            unsafe {
-                libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
-            }
+            crate::sys::kill(child.id(), crate::sys::SIGTERM);
         }
         lock(&self.st).status = "running".into();
         let chunk = packet_frames * channels * 4;
@@ -610,7 +606,7 @@ impl TestPoint {
         use socket2::{Domain, InterfaceIndexOrAddress, Protocol, SockAddr, Socket, Type};
         let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
         sock.set_reuse_address(true)?;
-        let _ = sock.set_reuse_port(true);
+        crate::sys::reuse_port(&sock);
         sock.set_recv_buffer_size(1 << 20)?;
         let iface = route_iface(&grp);
         let (mc0, t0) = (mcast_count(&iface), now_f64()); // NIC multicast rate before the join

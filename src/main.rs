@@ -67,7 +67,32 @@ fn launch_browser(url: String, delay: Duration) {
     });
 }
 
+/// Ctrl-C / service stop on Windows: signal-hook has no iterator there, so a flag is
+/// registered and watched; the shutdown is the same as on Unix.
+#[cfg(windows)]
+fn install_signal_handlers() {
+    use signal_hook::consts::{SIGINT, SIGTERM};
+    let hit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    for sig in [SIGINT, SIGTERM] {
+        if let Err(e) = signal_hook::flag::register(sig, hit.clone()) {
+            eprintln!("[WARN] signal handler {sig} not installed: {e}");
+        }
+    }
+    std::thread::spawn(move || loop {
+        if hit.load(Ordering::SeqCst) {
+            util::shutdown_flag().store(true, Ordering::SeqCst);
+            {
+                let _g = tap::state_lock();
+                tap::abandon_ship();
+            }
+            exit(0);
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    });
+}
+
 /// SIGTERM / SIGINT: set the shutdown flag, abandon ship, exit 0 (Python handle_sigterm).
+#[cfg(unix)]
 fn install_signal_handlers() {
     use signal_hook::consts::{SIGINT, SIGTERM};
     let mut signals = match signal_hook::iterator::Signals::new([SIGTERM, SIGINT]) {
