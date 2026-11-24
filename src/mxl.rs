@@ -699,7 +699,11 @@ impl MxlFlow {
         if !size_ok {
             let mut f = File::create(&self.data_path)?;
             f.set_len(self.data_size as u64)?;
+            // Linux reserves the blocks up front; elsewhere writing the last byte commits the size.
+            #[cfg(target_os = "linux")]
             let r = unsafe { libc::posix_fallocate(f.as_raw_fd(), 0, self.data_size as libc::off_t) };
+            #[cfg(not(target_os = "linux"))]
+            let r = 1;
             if r != 0 && self.data_size > 0 {
                 use std::io::Seek;
                 f.seek(std::io::SeekFrom::Start(self.data_size as u64 - 1))?;

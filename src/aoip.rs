@@ -1284,7 +1284,12 @@ fn run_ptp_apk(stop: Arc<AtomicBool>) {
     use apkaudio_ptp::report::{snapshot_json, Counters};
 
     let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "ward-beck-audio-tab".into());
+    #[cfg(feature = "vendors")]
     let vendors = apkaudio_maclookup::MacVendors::start();
+    #[cfg(feature = "vendors")]
+    let vendor = |id: &str| vendors.vendor(id);
+    #[cfg(not(feature = "vendors"))]
+    let vendor = |_: &str| -> Option<String> { None };
     while !stop.load(Ordering::Relaxed) {
         let transports = Transports::open();
         let open = transports.any_open();
@@ -1339,7 +1344,7 @@ fn run_ptp_apk(stop: Arc<AtomicBool>) {
                 ))
                 .unwrap_or(Value::Null);
                 let blocked = snap["counts"]["udp_blocked"].as_bool().unwrap_or(false);
-                let rows = parse_ptp_discovery(&apk_rows(&snap, &|id| vendors.vendor(id))).unwrap_or_default();
+                let rows = parse_ptp_discovery(&apk_rows(&snap, &vendor)).unwrap_or_default();
                 let mut r = registry();
                 let at = now_f64();
                 for mut e in ptp_events(&r.mqtt_rows, &rows) {
