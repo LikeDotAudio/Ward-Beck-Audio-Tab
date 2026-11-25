@@ -66,6 +66,11 @@ pub trait Mxl: Send + Sync {
     fn write_head(&self, _flow_id: &str) -> Option<usize> {
         None
     }
+    /// The writer's absolute head index (frames written since it started), when the flow
+    /// carries one: a jump backwards or by more than the ring is a writer restart.
+    fn write_index(&self, _flow_id: &str) -> Option<u64> {
+        None
+    }
     fn read_planar(&self, _flow_id: &str, _start: usize, _count: usize) -> Vec<Vec<f32>> {
         Vec::new()
     }

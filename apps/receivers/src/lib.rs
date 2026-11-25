@@ -36,6 +36,7 @@ use std::time::{Duration, Instant};
 
 use wbs_pyshim::sock as py;
 use wbs_common::{now_f64, run_cmd, PcmChunk};
+use wbs_plugin::services::{FlowInfo, Mxl};
 
 pub const RING_PACKETS: usize = 10;
 pub const RING_SECONDS: f64 = 10.0; // every test point (ALSA, PipeWire, MXL, AoIP): 10 s ring
@@ -336,6 +337,181 @@ impl TapRing {
 }
 
 // ---------------------------------------------------------------------------
+// MXL reader: follows one flow's write head, through its writer stopping and restarting
+// ---------------------------------------------------------------------------
+
+/// The writer is called stopped when its head has not moved for this long.
+pub const MXL_STALL: Duration = Duration::from_secs(1);
+/// The flow's geometry (ring length, channels, rate, grain) is looked up again this often.
+const MXL_RECHECK: Duration = Duration::from_secs(2);
+
+/// What one poll of an MXL flow produced.
+#[derive(Default)]
+struct MxlStep {
+    /// (re)resolved flow: the slot takes its geometry
+    flow: Option<FlowInfo>,
+    /// new (status, hint)
+    status: Option<(String, Option<String>)>,
+    /// new frames, planar
+    audio: Option<Vec<Vec<f32>>>,
+    /// packets the reader fell too far behind to read (overrun)
+    lost: u64,
+}
+
+/// Reads behind one flow's write head. The slot stays on the flow id: when the flow
+/// disappears or its head stops, the reader waits and resumes on its own once the writer
+/// is back, resolving the flow again (ring length / channels may change) and starting at the
+/// new head rather than replaying a stale ring.
+struct MxlReader {
+    id: String,
+    info: Option<FlowInfo>,
+    live: bool,
+    shown: Option<(String, Option<String>)>,
+    cursor: usize,
+    index: Option<u64>,
+    last_move: Instant,
+    last_read: Instant,
+    last_check: Instant,
+    stalls: u64,
+    restarts: u64,
+}
+
+const MXL_GONE: &str = "writer gone: the flow left /dev/shm/mxl; resumes when it is back";
+const MXL_STOPPED: &str = "writer stopped: its write head has not moved for over 1 s; resumes when it moves";
+
+impl MxlReader {
+    fn new(id: &str, now: Instant) -> Self {
+        MxlReader {
+            id: id.to_string(),
+            info: None,
+            live: false,
+            shown: None,
+            cursor: 0,
+            index: None,
+            last_move: now,
+            last_read: now,
+            last_check: now,
+            stalls: 0,
+            restarts: 0,
+        }
+    }
+
+    /// Poll interval: one grain while live, 50 ms while waiting for the writer.
+    fn interval(&self) -> Duration {
+        match &self.info {
+            Some(f) if self.live && f.sample_rate > 0 => {
+                Duration::from_secs_f64((f.quantum.max(1) as f64 / f.sample_rate as f64).clamp(0.0005, 0.05))
+            }
+            _ => Duration::from_millis(50),
+        }
+    }
+
+    /// Status into the step, only when it changes.
+    fn show(&mut self, out: &mut MxlStep, status: &str, hint: Option<&str>) {
+        let st = (status.to_string(), hint.map(str::to_string));
+        if self.shown.as_ref() != Some(&st) {
+            self.shown = Some(st.clone());
+            out.status = Some(st);
+        }
+    }
+
+    fn wait(&mut self, out: &mut MxlStep, hint: &str) {
+        if self.live {
+            self.live = false;
+            self.stalls += 1;
+        }
+        self.show(out, "waiting", Some(hint));
+    }
+
+    /// Start (again) at the writer's head: nothing stale is read.
+    fn resume(&mut self, out: &mut MxlStep, w: usize, index: Option<u64>, now: Instant) {
+        self.live = true;
+        self.cursor = w;
+        self.index = index;
+        self.last_move = now;
+        self.last_read = now;
+        self.show(out, "running", None);
+    }
+
+    fn poll(&mut self, mxl: &dyn Mxl, now: Instant) -> MxlStep {
+        let mut out = MxlStep::default();
+        let Some(head) = mxl.write_head(&self.id) else {
+            self.info = None;
+            self.wait(&mut out, MXL_GONE);
+            return out;
+        };
+        let idx = mxl.write_index(&self.id);
+        // (re)resolve: first time, after the flow was gone, and every MXL_RECHECK
+        if self.info.is_none() || now.duration_since(self.last_check) >= MXL_RECHECK {
+            self.last_check = now;
+            let Some(f) = mxl.flow_info(&self.id).filter(|f| f.buffer_length > 0 && f.sample_rate > 0) else {
+                self.info = None;
+                self.wait(&mut out, MXL_GONE);
+                return out;
+            };
+            let geom = |f: &FlowInfo| (f.buffer_length, f.channel_count, f.sample_rate, f.quantum);
+            let was = self.info.as_ref().map(geom);
+            if was != Some(geom(&f)) {
+                if was.is_some() {
+                    self.restarts += 1; // same id, new ring: the writer restarted in place
+                }
+                let w = head % f.buffer_length;
+                self.info = Some(f.clone());
+                out.flow = Some(f);
+                self.resume(&mut out, w, idx, now);
+                return out;
+            }
+        }
+        let Some(f) = self.info.clone() else { return out };
+        let (l, q) = (f.buffer_length, f.quantum.max(1));
+        let w = head % l;
+        let avail = (w + l - self.cursor % l) % l;
+        let expect = now.duration_since(self.last_read).as_secs_f64() * f.sample_rate as f64;
+        // the head index jumping = the writer restarted (backwards, or further ahead than the
+        // elapsed time explains); ahead by more than a ring in time = we fell behind (overrun)
+        let (jumped, lost) = match (idx, self.index) {
+            (Some(i), Some(p)) if i < p => (true, 0),
+            (Some(i), Some(p)) if i - p > l as u64 => {
+                let d = i - p;
+                if d as f64 <= expect * 2.0 + q as f64 { (true, (d - l as u64).div_ceil(q as u64).max(1)) } else { (true, 0) }
+            }
+            (Some(_), Some(_)) => (false, 0),
+            // no index: a head far beyond what the elapsed time allows is a restart
+            _ => (avail > l / 4 && avail as f64 > expect * 4.0 + 4.0 * q as f64, 0),
+        };
+        if jumped {
+            if lost == 0 {
+                self.restarts += 1;
+            }
+            out.lost = lost;
+            self.resume(&mut out, w, idx, now);
+            return out;
+        }
+        if avail == 0 {
+            if self.live && now.duration_since(self.last_move) > MXL_STALL {
+                self.wait(&mut out, MXL_STOPPED);
+            }
+            return out;
+        }
+        if !self.live {
+            self.resume(&mut out, w, idx, now);
+            return out;
+        }
+        let n = avail.min((RING_SECONDS * f.sample_rate as f64) as usize);
+        let start = (w + l - n % l) % l;
+        let planar = mxl.read_planar(&self.id, start, n);
+        if planar.len() == f.channel_count && planar.iter().all(|p| p.len() == n) {
+            out.audio = Some(planar);
+        }
+        self.cursor = w;
+        self.index = idx;
+        self.last_move = now;
+        self.last_read = now;
+        out
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Test point
 // ---------------------------------------------------------------------------
 
@@ -565,40 +741,46 @@ impl TestPoint {
         let flow = mxl
             .flow_info(&self.reference)
             .ok_or_else(|| PyErr::lookup(format!("MXL flow {} is not in /dev/shm/mxl", self.reference)))?;
-        let id = flow.flow_id.clone();
-        let channels = flow.channel_count;
-        {
-            let mut s = lock(&self.st);
-            s.sample_rate = flow.sample_rate;
-            s.channels = channels;
-            s.packet_frames = flow.quantum;
-            s.source = format!("{} \u{b7} {} (shared memory)", flow.flow_id, flow.domain_id);
-            s.ring = Some(TapRing::new(channels, flow.quantum, flow.sample_rate, RING_SECONDS));
-            s.status = "running".into();
-        }
-        let l = flow.buffer_length;
-        if l == 0 || flow.sample_rate == 0 {
+        if flow.buffer_length == 0 || flow.sample_rate == 0 {
             return Err(PyErr { class: "ZeroDivisionError", msg: "integer modulo by zero".into() });
         }
-        let ring_len = lock(&self.st).ring.as_ref().map(|r| r.length).unwrap_or(0);
-        let mut cursor = mxl.write_head(&id).unwrap_or(0);
-        let interval = flow.quantum as f64 / flow.sample_rate as f64;
+        let mut rd = MxlReader::new(&self.reference, Instant::now());
         while !self.stopped() {
-            std::thread::sleep(Duration::from_secs_f64(interval));
-            let Some(w) = mxl.write_head(&id) else { break };
-            let mut avail = (w + l - cursor % l) % l;
-            if avail == 0 {
-                continue;
-            }
-            avail = avail.min(ring_len);
-            let start = (w + l - avail % l) % l;
-            let planar = mxl.read_planar(&id, start, avail);
-            let mut s = lock(&self.st);
-            s.write_planar(self.slot, &planar);
-            drop(s);
-            cursor = w;
+            let st = rd.poll(mxl, Instant::now());
+            self.apply_mxl(&st);
+            std::thread::sleep(rd.interval());
         }
         Ok(())
+    }
+
+    /// One MXL poll's outcome into the slot: geometry, status, audio, lost packets.
+    fn apply_mxl(&self, st: &MxlStep) {
+        if st.flow.is_none() && st.status.is_none() && st.audio.is_none() && st.lost == 0 {
+            return;
+        }
+        let mut s = lock(&self.st);
+        if let Some(f) = &st.flow {
+            s.sample_rate = f.sample_rate;
+            s.channels = f.channel_count;
+            s.packet_frames = f.quantum;
+            s.source = format!("{} \u{b7} {} (shared memory)", f.flow_id, f.domain_id);
+            let same = s.ring.as_ref().is_some_and(|r| {
+                (r.channels, r.packet_frames, r.sample_rate) == (f.channel_count, f.quantum, f.sample_rate)
+            });
+            if !same {
+                s.ring = Some(TapRing::new(f.channel_count, f.quantum, f.sample_rate, RING_SECONDS));
+                s.fold = None;
+            }
+        }
+        if let Some((status, hint)) = &st.status {
+            s.status = status.clone();
+            s.hint = hint.clone();
+            s.error = None;
+        }
+        s.lost += st.lost;
+        if let Some(planar) = &st.audio {
+            s.write_planar(self.slot, planar);
+        }
     }
 
     // -- AES67 / RAVENNA RTP --
@@ -1460,6 +1642,180 @@ mod tests {
         assert_eq!((&d["write_head"], &d["meter_head"]), (&json!(6144), &json!(5120)));
         assert_eq!(d["channels"][0]["peak_db"], -120.0);
         assert_eq!(serde_json::to_string(&d["channels"][0]["min"][0]).unwrap(), "0.0");
+    }
+
+    /// A foreign MXL writer the tests start, stop, restart and resize.
+    struct FakeFlow {
+        st: Mutex<FakeState>,
+    }
+    struct FakeState {
+        present: bool,
+        has_index: bool,
+        index: u64,
+        info: FlowInfo,
+    }
+    impl FakeFlow {
+        fn new(l: usize, ch: usize) -> Self {
+            FakeFlow { st: Mutex::new(FakeState { present: true, has_index: true, index: 1_000_000, info: Self::info(l, ch) }) }
+        }
+        fn info(l: usize, ch: usize) -> FlowInfo {
+            FlowInfo {
+                flow_id: "cbc-player".into(),
+                label: "CBC".into(),
+                domain_id: "domain-wbs-test-signals".into(),
+                channel_count: ch,
+                sample_rate: 48000,
+                quantum: 48,
+                buffer_length: l,
+            }
+        }
+        fn advance(&self, n: u64) {
+            lock(&self.st).index += n;
+        }
+    }
+    impl Mxl for FakeFlow {
+        fn flow_info(&self, id: &str) -> Option<FlowInfo> {
+            let s = lock(&self.st);
+            (s.present && id == "cbc-player").then(|| s.info.clone())
+        }
+        fn write_head(&self, _id: &str) -> Option<usize> {
+            let s = lock(&self.st);
+            s.present.then(|| (s.index % s.info.buffer_length as u64) as usize)
+        }
+        fn write_index(&self, _id: &str) -> Option<u64> {
+            let s = lock(&self.st);
+            (s.present && s.has_index).then_some(s.index)
+        }
+        // each sample is its ring position, so a read shows where it came from
+        fn read_planar(&self, _id: &str, start: usize, count: usize) -> Vec<Vec<f32>> {
+            let s = lock(&self.st);
+            let l = s.info.buffer_length;
+            (0..s.info.channel_count).map(|_| (0..count).map(|k| ((start + k) % l) as f32).collect()).collect()
+        }
+    }
+
+    fn ms(t: Instant, n: u64) -> Instant {
+        t + Duration::from_millis(n)
+    }
+
+    #[test]
+    fn mxl_reader_follows_writer_through_stop_and_restart() {
+        let fake = FakeFlow::new(4800, 2);
+        let t = Instant::now();
+        let mut rd = MxlReader::new("cbc-player", t);
+        // first poll: resolved, running, nothing stale read
+        let s = rd.poll(&fake, t);
+        assert_eq!(s.flow.as_ref().unwrap().buffer_length, 4800);
+        assert_eq!(s.status, Some(("running".into(), None)));
+        assert!(s.audio.is_none());
+        let w0 = (1_000_000 % 4800) as f32;
+        // the writer moves: exactly the new frames
+        fake.advance(480);
+        let s = rd.poll(&fake, ms(t, 10));
+        let a = s.audio.unwrap();
+        assert_eq!((a.len(), a[0].len(), a[0][0]), (2, 480, w0));
+        assert!(s.status.is_none() && s.flow.is_none() && s.lost == 0);
+
+        // flow dir removed: waiting, said once, slot kept on the id
+        lock(&fake.st).present = false;
+        let s = rd.poll(&fake, ms(t, 20));
+        assert_eq!(s.status, Some(("waiting".into(), Some(MXL_GONE.into()))));
+        assert!(rd.poll(&fake, ms(t, 70)).status.is_none());
+        assert_eq!(rd.id, "cbc-player");
+
+        // back with a new ring (length, channels) and a fresh absolute index
+        {
+            let mut f = lock(&fake.st);
+            f.present = true;
+            f.index = 100;
+            f.info = FakeFlow::info(9600, 4);
+        }
+        let s = rd.poll(&fake, ms(t, 120));
+        let f = s.flow.unwrap();
+        assert_eq!((f.buffer_length, f.channel_count), (9600, 4));
+        assert_eq!(s.status, Some(("running".into(), None)));
+        assert!(s.audio.is_none());
+        fake.advance(48);
+        let a = rd.poll(&fake, ms(t, 121)).audio.unwrap();
+        assert_eq!((a.len(), a[0].len(), a[0][0]), (4, 48, 100.0));
+
+        // head stops: quiet under 1 s, then "writer stopped"
+        assert!(rd.poll(&fake, ms(t, 700)).status.is_none());
+        let s = rd.poll(&fake, ms(t, 1300));
+        assert_eq!(s.status, Some(("waiting".into(), Some(MXL_STOPPED.into()))));
+        assert_eq!(rd.stalls, 2);
+        // it moves again: running from the new head, then audio as usual
+        fake.advance(48);
+        let s = rd.poll(&fake, ms(t, 1400));
+        assert_eq!(s.status, Some(("running".into(), None)));
+        assert!(s.audio.is_none());
+        fake.advance(48);
+        assert_eq!(rd.poll(&fake, ms(t, 1401)).audio.unwrap()[0].len(), 48);
+
+        // restart in place (index back to 7): resync, no stale ring, nothing counted lost
+        lock(&fake.st).index = 7;
+        let s = rd.poll(&fake, ms(t, 1402));
+        assert!(s.audio.is_none() && s.lost == 0 && s.status.is_none());
+        assert_eq!(rd.restarts, 1);
+        fake.advance(48);
+        let a = rd.poll(&fake, ms(t, 1403)).audio.unwrap();
+        assert_eq!((a[0].len(), a[0][0]), (48, 7.0));
+    }
+
+    #[test]
+    fn mxl_reader_overrun_and_unindexed_jump() {
+        let fake = FakeFlow::new(4800, 2);
+        let t = Instant::now();
+        let mut rd = MxlReader::new("cbc-player", t);
+        rd.poll(&fake, t);
+        // the reader was away 200 ms while the writer wrote 9600 frames into a 4800 ring:
+        // an overrun of (9600 - 4800) / 48 packets, then on from the head
+        fake.advance(9600);
+        let s = rd.poll(&fake, ms(t, 200));
+        assert!(s.audio.is_none());
+        assert_eq!((s.lost, rd.restarts), (100, 0));
+        fake.advance(48);
+        assert_eq!(rd.poll(&fake, ms(t, 201)).audio.unwrap()[0].len(), 48);
+        // a writer with no absolute index: a head far beyond the elapsed time is a restart
+        lock(&fake.st).has_index = false;
+        fake.advance(48);
+        assert_eq!(rd.poll(&fake, ms(t, 202)).audio.unwrap()[0].len(), 48);
+        fake.advance(3000);
+        let s = rd.poll(&fake, ms(t, 203));
+        assert!(s.audio.is_none() && s.lost == 0);
+        assert_eq!(rd.restarts, 1);
+        fake.advance(48);
+        assert_eq!(rd.poll(&fake, ms(t, 204)).audio.unwrap()[0].len(), 48);
+    }
+
+    #[test]
+    fn mxl_step_into_slot() {
+        let tp = TestPoint::new(1, "mxl", "cbc-player", "");
+        let fake = FakeFlow::new(4800, 2);
+        let t = Instant::now();
+        let mut rd = MxlReader::new("cbc-player", t);
+        tp.apply_mxl(&rd.poll(&fake, t));
+        fake.advance(480);
+        tp.apply_mxl(&rd.poll(&fake, ms(t, 10)));
+        let i = tp.info();
+        assert_eq!((i["status"].as_str(), i["packets"].as_u64(), i["channel_count"].as_u64()), (Some("running"), Some(1), Some(2)));
+        lock(&fake.st).present = false;
+        tp.apply_mxl(&rd.poll(&fake, ms(t, 20)));
+        let i = tp.info();
+        assert_eq!((i["status"].as_str(), i["hint"].as_str()), (Some("waiting"), Some(MXL_GONE)));
+        // back with 4 channels: the ring follows, the fold is rebuilt from it
+        {
+            let mut f = lock(&fake.st);
+            f.present = true;
+            f.info = FakeFlow::info(4800, 4);
+        }
+        tp.apply_mxl(&rd.poll(&fake, ms(t, 70)));
+        fake.advance(48);
+        tp.apply_mxl(&rd.poll(&fake, ms(t, 71)));
+        let i = tp.info();
+        assert_eq!((i["status"].as_str(), i["channel_count"].as_u64(), i["packets"].as_u64()), (Some("running"), Some(4), Some(1)));
+        assert!(i["hint"].is_null());
+        assert_eq!(lock(&tp.st).fold.as_ref().unwrap().packets, 1);
     }
 
     /// Live PipeWire point: TP_PW_REF=<object id> (network/system; run with --ignored --nocapture).
