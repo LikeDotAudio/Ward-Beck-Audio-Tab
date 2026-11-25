@@ -1,0 +1,157 @@
+<!doctype html>
+<!-- Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio Tap Manual</title>
+<meta name="description" content="Ward-Beck Audio Tap 2.2.1 manual: what it is, how to install it on Linux, Windows and macOS, and what to expect on each.">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="index.html">Ward-Beck Audio Tap</a>
+  <nav>
+    <a href="index.html" aria-current="page">Manual</a>
+    <a href="windows.html">Windows</a>
+    <a href="macos.html">macOS</a>
+    <a href="linux.html">Linux</a>
+  </nav>
+</div></header>
+
+<main class="wrap">
+  <h1>Audio Tap manual</h1>
+  <p class="lede">The Tap is a small program that runs on your computer and gives the Ward-Beck web meters
+    (<a href="https://ward-beck.ca">ward-beck.ca</a>, <a href="https://xtm.wbsps.ca">xtm.wbsps.ca</a>)
+    real audio, real network streams and real clocks to look at. <span class="ver">version 2.2.1</span></p>
+
+  <h2 id="how">How it fits together</h2>
+  <figure>
+    <svg viewBox="0 0 640 230" role="img" aria-labelledby="fitT">
+      <title id="fitT">The web app in your browser talks to the Tap at 127.0.0.1 port 8467; the Tap reads audio, the network and the clock</title>
+      <rect class="d-panel" x="10" y="20" width="190" height="120" rx="10"/>
+      <rect class="shot-bar" x="10" y="20" width="190" height="22" rx="10"/>
+      <circle class="d-stop" cx="26" cy="31" r="4"/><circle class="t-warn" cx="40" cy="31" r="4"/><circle class="d-live" cx="54" cy="31" r="4"/>
+      <text class="d-ink" x="105" y="70" text-anchor="middle" font-size="15" font-weight="700">Web app</text>
+      <text class="t-soft" x="105" y="90" text-anchor="middle" font-size="12">ward-beck.ca</text>
+      <g transform="translate(60 102)">
+        <rect class="d-live" x="0" y="6" width="10" height="20"/><rect class="d-live" x="14" y="0" width="10" height="26"/>
+        <rect class="d-live" x="28" y="10" width="10" height="16"/><rect class="d-live" x="42" y="4" width="10" height="22"/>
+        <rect class="d-live" x="56" y="12" width="10" height="14"/><rect class="d-live" x="70" y="2" width="10" height="24"/>
+      </g>
+      <text class="t-soft" x="105" y="162" text-anchor="middle" font-size="12">in Chrome, Edge, Firefox or Safari</text>
+
+      <path class="d-line" d="M205 80 H300" marker-end="url(#ah)"/>
+      <path class="d-line" d="M300 96 H205" marker-end="url(#ah)"/>
+      <text class="t-soft mono" x="252" y="70" text-anchor="middle" font-size="11">127.0.0.1:8467</text>
+      <text class="t-soft" x="252" y="116" text-anchor="middle" font-size="11">meters, routing</text>
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" class="d-ink"/></marker></defs>
+
+      <rect class="d-accent" x="305" y="40" width="150" height="96" rx="10"/>
+      <text class="d-accent-ink" x="380" y="80" text-anchor="middle" font-size="16" font-weight="700">Audio Tap</text>
+      <text class="d-accent-ink" x="380" y="100" text-anchor="middle" font-size="12">runs in the background</text>
+      <text class="d-accent-ink" x="380" y="116" text-anchor="middle" font-size="12">starts at login</text>
+
+      <path class="d-line" d="M455 60 L510 34"/><path class="d-line" d="M455 88 H510"/><path class="d-line" d="M455 116 L510 142"/>
+      <rect class="d-panel" x="512" y="16" width="118" height="36" rx="8"/>
+      <text class="d-ink" x="571" y="39" text-anchor="middle" font-size="13">Computer audio</text>
+      <rect class="d-panel" x="512" y="70" width="118" height="36" rx="8"/>
+      <text class="d-ink" x="571" y="93" text-anchor="middle" font-size="13">AES67 / AoIP</text>
+      <rect class="d-panel" x="512" y="124" width="118" height="36" rx="8"/>
+      <text class="d-ink" x="571" y="147" text-anchor="middle" font-size="13">PTP / NTP clocks</text>
+
+      <text class="t-soft" x="320" y="205" text-anchor="middle" font-size="12">Nothing leaves your computer except the network streams you choose to send.</text>
+    </svg>
+    <figcaption>The web page is the face; the Tap is the hands. Without the Tap the meters still open, but they have nothing local to show.</figcaption>
+  </figure>
+
+  <h2 id="choose">Choose your computer</h2>
+  <div class="grid">
+    <a class="card os-card" href="windows.html">
+      <svg viewBox="0 0 44 44" aria-hidden="true"><rect class="d-accent" x="4" y="4" width="17" height="17"/><rect class="d-accent" x="23" y="4" width="17" height="17"/><rect class="d-accent" x="4" y="23" width="17" height="17"/><rect class="d-accent" x="23" y="23" width="17" height="17"/></svg>
+      <h3>Windows 10 / 11</h3>
+      <p>64-bit PC. Unzip, right-click <code>install.ps1</code>, Run with PowerShell. About 2 minutes. <span class="pill part">preview</span></p>
+    </a>
+    <a class="card os-card" href="macos.html">
+      <svg viewBox="0 0 44 44" aria-hidden="true"><rect class="d-panel" x="3" y="6" width="38" height="26" rx="3"/><rect class="d-accent" x="7" y="10" width="30" height="18" rx="1"/><path class="d-accent" d="M14 38 h16 l-2 -6 h-12 z"/></svg>
+      <h3>macOS 14.2 or newer</h3>
+      <p>Apple silicon or Intel. Unzip, run <code>bash install.sh</code> in Terminal. About 2 minutes. <span class="pill part">preview</span></p>
+    </a>
+    <a class="card os-card" href="linux.html">
+      <svg viewBox="0 0 44 44" aria-hidden="true"><rect class="term" x="3" y="6" width="38" height="32" rx="4"/><path d="M9 16 l6 5 -6 5" stroke="var(--live)" stroke-width="3" fill="none"/><rect class="t-ink" x="18" y="25" width="12" height="3"/></svg>
+      <h3>Linux</h3>
+      <p>x86_64 or ARM64 (Raspberry Pi 4/5), PipeWire or PulseAudio. <code>bash install.sh</code>. <span class="pill yes">full</span></p>
+    </a>
+  </div>
+
+  <h2 id="expect">What to expect on each system</h2>
+  <p>Linux is the reference system and has everything. Windows and macOS are <strong>previews</strong> in
+    2.2.1: the Tap installs, starts at login, answers the web app and handles network audio and clocks, but it
+    <strong>does not yet capture the computer's own sound</strong>. That comes in a later release, without any
+    extra driver to install.</p>
+  <div class="tablewrap card">
+  <table>
+    <thead><tr><th>Feature</th><th>Linux</th><th>Windows</th><th>macOS</th></tr></thead>
+    <tbody>
+      <tr><td>Installs per user, starts at login, restarts if it stops</td><td><span class="pill yes">yes</span></td><td><span class="pill yes">yes</span></td><td><span class="pill yes">yes</span></td></tr>
+      <tr><td>Web app finds the Tap (status, logs, diagnostics)</td><td><span class="pill yes">yes</span></td><td><span class="pill yes">yes</span></td><td><span class="pill yes">yes</span></td></tr>
+      <tr><td>Test-tone generators and MXL rings</td><td><span class="pill yes">yes</span></td><td><span class="pill yes">yes</span></td><td><span class="pill yes">yes</span></td></tr>
+      <tr><td>AES67 / SAP stream discovery on the network</td><td><span class="pill yes">yes</span></td><td><span class="pill yes">yes</span></td><td><span class="pill yes">yes</span></td></tr>
+      <tr><td>PTP over UDP (ports 319/320)</td><td><span class="pill yes">yes</span> after one sudo</td><td><span class="pill yes">yes</span></td><td><span class="pill yes">yes</span></td></tr>
+      <tr><td>gPTP / PTP over raw Ethernet</td><td><span class="pill yes">yes</span></td><td><span class="pill no">no</span></td><td><span class="pill no">no</span></td></tr>
+      <tr><td>Meter the computer's own sound (YouTube, DAW, players)</td><td><span class="pill yes">yes</span></td><td><span class="pill no">not yet</span></td><td><span class="pill no">not yet</span></td></tr>
+      <tr><td>Virtual buses, patchbay, sound-card (ALSA) controls</td><td><span class="pill yes">yes</span></td><td><span class="pill no">no</span></td><td><span class="pill no">no</span></td></tr>
+      <tr><td>Dante discovery</td><td><span class="pill yes">yes</span> (avahi)</td><td><span class="pill no">no</span></td><td><span class="pill no">no</span></td></tr>
+      <tr><td>NTP clock readout and "take time from the NRC" fix</td><td><span class="pill yes">yes</span></td><td><span class="pill part">partial</span></td><td><span class="pill part">partial</span></td></tr>
+      <tr><td>Code-signed download</td><td>—</td><td><span class="pill no">not yet</span></td><td><span class="pill no">not yet</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="note warn">
+    <p><strong>Normal on Windows and macOS:</strong> the log lists Linux tools it could not find, for example
+      <code>ERROR [cmd] 'pactl' is not installed</code> and the same for <code>avahi-browse</code>,
+      <code>timedatectl</code>, <code>chronyc</code>, <code>ip</code>, <code>aplay</code>, <code>amixer</code>,
+      <code>wpctl</code> and <code>pw-dump</code>. Each line means "that Linux feature is off here". It is not a fault.</p>
+    <p>On the NTP card the suggested fix commands are the Linux ones; on Windows and macOS set the time server in the system's own Date &amp; Time settings instead.</p>
+  </div>
+
+  <h2 id="check">Check that it is running</h2>
+  <p>On any system, open <a href="http://127.0.0.1:8467/api/diagnostics">http://127.0.0.1:8467/api/diagnostics</a> in a
+    browser on the same computer. You should see a page of text that starts like this:</p>
+  <pre><code>{"tap": {"version": "2.2.1", "os": "windows", "arch": "x86_64", ... "port": 8467,
+ "audio_backend": "WASAPI loopback (driverless)", ...</code></pre>
+  <p><code>os</code> is <code>linux</code>, <code>windows</code> or <code>macos</code>. If the page does not open, the Tap is not running: see the
+    "If something is wrong" section of your system's page.</p>
+
+  <h2 id="help">If something is wrong</h2>
+  <ol class="steps">
+    <li><h3>Get the diagnostic bundle</h3>
+      <p>Open <a href="http://127.0.0.1:8467/api/diagnostics/bundle">http://127.0.0.1:8467/api/diagnostics/bundle</a>
+        and save the file. It holds the version, the system, what the Tap could and could not do, and the end of the log.</p></li>
+    <li><h3>Or send the log file</h3>
+      <p>If the Tap will not start there is no bundle; send the log instead.</p>
+      <div class="tablewrap"><table>
+        <tr><th>System</th><th>Log file</th></tr>
+        <tr><td>Windows</td><td><code>%LOCALAPPDATA%\Ward-Beck\Audio Tap\logs\tap.log</code></td></tr>
+        <tr><td>macOS</td><td><code>~/Library/Logs/Ward-Beck Audio Tap/tap.log</code></td></tr>
+        <tr><td>Linux</td><td><code>~/.local/state/ward-beck-audio-tap/tap.log</code></td></tr>
+      </table></div></li>
+    <li><h3>Say what you did and what you saw</h3>
+      <p>Which page, which button, what you expected, what happened. Open an issue at
+        <a href="https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/issues">github.com/WardBeckSystems/Ward-Beck-Audio-Tap/issues</a>
+        and attach the file.</p></li>
+  </ol>
+
+  <h2 id="downloads">Downloads</h2>
+  <div class="tablewrap card"><table>
+    <tr><th>System</th><th>Download</th></tr>
+    <tr><td>Windows 10/11 x64</td><td><a href="https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-windows.zip">ward-beck-audio-tap-windows.zip</a></td></tr>
+    <tr><td>macOS 14.2+ (Apple silicon and Intel)</td><td><a href="https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-macos.zip">ward-beck-audio-tap-macos.zip</a></td></tr>
+    <tr><td>Linux x86_64 and ARM64</td><td><a href="https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-linux.tar.gz">ward-beck-audio-tap-linux.tar.gz</a></td></tr>
+  </table></div>
+  <p>Every download also contains this manual in its <code>manual</code> folder; open <code>manual/index.html</code>.</p>
+</main>
+
+<footer><div class="wrap">Copyright © 2026 Ward-Beck Systems (<a href="https://ward-beck.ca">Ward-Beck.ca</a>). All rights reserved.</div></footer>
+</body>
+</html>

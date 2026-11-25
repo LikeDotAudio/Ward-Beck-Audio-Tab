@@ -1,0 +1,112 @@
+<!doctype html>
+<!-- Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio Tap for Linux</title>
+<meta name="description" content="Set up the Ward-Beck Audio Tap 2.2.1 on Linux (x86_64 or ARM64, PipeWire or PulseAudio): download, install, PTP permission, check, update and remove.">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="index.html">Ward-Beck Audio Tap</a>
+  <nav>
+    <a href="index.html">Manual</a>
+    <a href="windows.html">Windows</a>
+    <a href="macos.html">macOS</a>
+    <a href="linux.html" aria-current="page">Linux</a>
+  </nav>
+</div></header>
+
+<main class="wrap">
+  <h1>Linux setup</h1>
+  <p class="lede">x86_64 PCs and ARM64 (Raspberry Pi 4 and 5) in one download. Needs PipeWire with
+    <code>pipewire-pulse</code>, or PulseAudio. About one minute. <span class="ver">version 2.2.1 · full</span></p>
+
+  <h2 id="install">Install</h2>
+  <ol class="steps">
+    <li>
+      <h3>Download and unpack</h3>
+      <pre><code>cd ~/Downloads
+curl -LO https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-linux.tar.gz
+tar xzf ward-beck-audio-tap-linux.tar.gz
+cd ward-beck-audio-tap-linux</code></pre>
+    </li>
+    <li>
+      <h3>Run the installer</h3>
+      <pre><code>bash install.sh</code></pre>
+      <p>It picks the binary for your CPU, installs it to <code>~/.local/bin</code>, and sets up a systemd
+        <em>user</em> service that starts at login. It asks for your <strong>sudo password once</strong>, to
+        let the Tap listen for PTP (ports 319/320 and raw Ethernet). Skip it and everything else still works;
+        the Timing tab shows the command to run later.</p>
+      <figure>
+        <svg viewBox="0 0 640 240" role="img" aria-labelledby="l2">
+          <title id="l2">Terminal output of install.sh: prebuilt binary used, installed, PTP capabilities granted, user service installed and started, active at 127.0.0.1 port 8467</title>
+          <rect class="term" x="1" y="1" width="638" height="238" rx="8"/>
+          <g class="mono" font-size="12.5">
+            <text class="t-soft" x="16" y="26">$ bash install.sh</text>
+            <text class="t-ink" x="16" y="46"> Installing Ward-Beck Audio Tab</text>
+            <text class="t-ink" x="16" y="70">• Using the prebuilt x86_64 binary from this download</text>
+            <text class="t-ok" x="16" y="90">✔</text><text class="t-ink" x="34" y="90">Executable installed to: /home/you/.local/bin/ward-beck-audio-tab</text>
+            <text class="t-warn" x="16" y="110">[sudo] password for you:</text>
+            <text class="t-ok" x="16" y="130">✔</text><text class="t-ink" x="34" y="130">PTP capabilities granted</text>
+            <text class="t-ok" x="16" y="150">✔</text><text class="t-ink" x="34" y="150">User service installed: ~/.config/systemd/user/ward-beck-audio-tab.service</text>
+            <text class="t-ok" x="16" y="170">✔</text><text class="t-ink" x="34" y="170">Service enabled and started via systemctl --user</text>
+            <text class="t-ink" x="16" y="198">Ward-Beck Audio Tab is now active at: http://127.0.0.1:8467</text>
+            <text class="t-soft" x="16" y="220">To view service logs: journalctl --user -u ward-beck-audio-tab.service -f</text>
+          </g>
+        </svg>
+      </figure>
+    </li>
+    <li>
+      <h3>Open the web app</h3>
+      <p>Go to <a href="https://ward-beck.ca">ward-beck.ca</a> or <a href="https://xtm.wbsps.ca">xtm.wbsps.ca</a>.
+        Play something (YouTube, a player, a DAW): the meters move.</p>
+    </li>
+  </ol>
+
+  <h2 id="expect">What you will see</h2>
+  <div class="tablewrap card"><table>
+    <tr><th>Where</th><th>Expect</th></tr>
+    <tr><td>Sound settings</td><td>New Ward-Beck virtual outputs (the <code>wbs_…</code> buses). Your normal speakers keep working; the Tap mirrors to them with a feedback guard.</td></tr>
+    <tr><td>Web app</td><td>Everything: meters of the computer's sound, patchbay, generators, AES67 / SAP, Dante discovery, PTP / gPTP, NTP.</td></tr>
+    <tr><td>System monitor</td><td><code>ward-beck-audio-tab</code>, about 0.7% CPU while metering.</td></tr>
+    <tr><td>After a restart</td><td>Starts at login with your user session.</td></tr>
+  </table></div>
+
+  <h2 id="where">Where things are</h2>
+  <div class="tablewrap card"><table>
+    <tr><th>What</th><th>Where</th></tr>
+    <tr><td>Program</td><td><code>~/.local/bin/ward-beck-audio-tab</code></td></tr>
+    <tr><td>Log</td><td><code>~/.local/state/ward-beck-audio-tap/tap.log</code> · <code>journalctl --user -u ward-beck-audio-tab -f</code></td></tr>
+    <tr><td>Service</td><td><code>systemctl --user status ward-beck-audio-tab</code></td></tr>
+    <tr><td>API</td><td><a href="http://127.0.0.1:8467">http://127.0.0.1:8467</a></td></tr>
+  </table></div>
+
+  <h2 id="update">Update</h2>
+  <p>Unpack the new download and run its <code>bash install.sh</code>. It stops the service, replaces the
+    program, grants the PTP permission again (a new binary loses it) and restarts.</p>
+
+  <h2 id="remove">Remove</h2>
+  <pre><code>bash uninstall.sh</code></pre>
+
+  <h2 id="other">Other ways to run it</h2>
+  <p>From a git checkout, <code>bash linux/install.sh</code> builds from source (needs Rust from
+    <a href="https://rustup.rs">rustup.rs</a>). A container image is described in <code>docs/DEPLOYMENT.md</code>.</p>
+
+  <h2 id="trouble">If something is wrong</h2>
+  <div class="tablewrap card"><table>
+    <tr><th>You see</th><th>Do this</th></tr>
+    <tr><td><code>⚠ pactl not found</code></td><td>Install <code>pipewire-pulse</code> (or <code>pulseaudio-utils</code>) and run <code>install.sh</code> again.</td></tr>
+    <tr><td>Meters do not move</td><td>Choose a Ward-Beck output in the app's or system's sound settings, or route it in the web app's patchbay.</td></tr>
+    <tr><td>Timing tab asks for a command</td><td>PTP permission was skipped. Run the command it shows once (it uses <code>sudo setcap</code>).</td></tr>
+    <tr><td>Service will not start</td><td><code>journalctl --user -u ward-beck-audio-tab -n 50</code> and send the output.</td></tr>
+  </table></div>
+  <p>For any report, send the file from <a href="http://127.0.0.1:8467/api/diagnostics/bundle">127.0.0.1:8467/api/diagnostics/bundle</a>
+    (see <a href="index.html#help">If something is wrong</a>).</p>
+</main>
+
+<footer><div class="wrap">Copyright © 2026 Ward-Beck Systems (<a href="https://ward-beck.ca">Ward-Beck.ca</a>). All rights reserved.</div></footer>
+</body>
+</html>

@@ -1,0 +1,184 @@
+<!doctype html>
+<!-- Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio Tap for Windows</title>
+<meta name="description" content="Set up the Ward-Beck Audio Tap 2.2.1 on Windows 10 or 11: download, install, firewall, check, update and remove.">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="index.html">Ward-Beck Audio Tap</a>
+  <nav>
+    <a href="index.html">Manual</a>
+    <a href="windows.html" aria-current="page">Windows</a>
+    <a href="macos.html">macOS</a>
+    <a href="linux.html">Linux</a>
+  </nav>
+</div></header>
+
+<main class="wrap">
+  <h1>Windows setup</h1>
+  <p class="lede">Windows 10 or 11, 64-bit. No administrator rights, no driver. About two minutes. <span class="ver">version 2.2.1 · preview</span></p>
+
+  <div class="note warn">
+    <p><strong>Preview.</strong> On Windows the Tap runs, starts at sign-in, answers the web app, and handles
+      test tones, AES67 / SAP discovery and PTP. It does <strong>not yet meter the PC's own sound</strong>.
+      See <a href="index.html#expect">what to expect</a>.</p>
+  </div>
+
+  <h2 id="install">Install</h2>
+  <ol class="steps">
+    <li>
+      <h3>Download and unzip</h3>
+      <p>Download <a href="https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-windows.zip">ward-beck-audio-tap-windows.zip</a>.
+        In <em>Downloads</em>, right-click it › <strong>Extract All…</strong> › <strong>Extract</strong>.</p>
+      <figure>
+        <svg viewBox="0 0 640 200" role="img" aria-labelledby="w1">
+          <title id="w1">File Explorer: the unzipped folder holds ward-beck-audio-tab.exe, install.ps1, uninstall.ps1, README.md, LICENSE and the manual folder</title>
+          <rect class="shot-frame" x="1" y="1" width="638" height="198" rx="8"/>
+          <rect class="shot-bar" x="1" y="1" width="638" height="30" rx="8"/>
+          <text class="d-ink" x="16" y="21" font-size="13">📁  Downloads › ward-beck-audio-tap-windows</text>
+          <g font-size="13">
+            <text class="d-ink" x="24" y="58">📁  manual</text>
+            <text class="d-ink" x="24" y="82">⚙️  ward-beck-audio-tab.exe</text>
+            <rect class="d-accent" x="16" y="92" width="300" height="24" rx="4" opacity=".18"/>
+            <text class="d-ink" x="24" y="109" font-weight="700">📄  install.ps1</text>
+            <text class="d-ink" x="24" y="134">📄  uninstall.ps1</text>
+            <text class="d-ink" x="24" y="158">📄  README.md</text>
+            <text class="d-ink" x="24" y="182">📄  LICENSE</text>
+          </g>
+          <text class="t-soft" x="360" y="109" font-size="13">← the one you run</text>
+        </svg>
+        <figcaption>Six items. Run the installer from this extracted folder, not from inside the zip.</figcaption>
+      </figure>
+    </li>
+    <li>
+      <h3>Run the installer</h3>
+      <p>Right-click <code>install.ps1</code> › <strong>Run with PowerShell</strong>. On Windows 11 it is under
+        <strong>Show more options</strong>. A blue PowerShell window opens.</p>
+      <figure>
+        <svg viewBox="0 0 640 170" role="img" aria-labelledby="w2">
+          <title id="w2">Right-click menu on install.ps1 with Run with PowerShell highlighted</title>
+          <rect class="shot-frame" x="1" y="1" width="638" height="168" rx="8"/>
+          <text class="d-ink" x="24" y="40" font-size="13" font-weight="700">📄  install.ps1</text>
+          <rect class="d-panel" x="150" y="30" width="250" height="128" rx="6"/>
+          <g font-size="13">
+            <text class="d-ink" x="166" y="54">Open</text>
+            <text class="d-ink" x="166" y="78">Edit</text>
+            <rect class="d-accent" x="154" y="86" width="242" height="24" rx="4"/>
+            <text class="d-accent-ink" x="166" y="103" font-weight="700">Run with PowerShell</text>
+            <text class="d-ink" x="166" y="128">Open with…</text>
+            <text class="d-ink" x="166" y="150">Properties</text>
+          </g>
+        </svg>
+      </figure>
+      <p>If Windows asks <em>"Do you want to run this file?"</em> or shows <em>"Windows protected your PC"</em>,
+        choose <strong>More info › Run anyway</strong>. That appears because 2.2.1 is not yet code-signed.</p>
+    </li>
+    <li>
+      <h3>Allow the network</h3>
+      <p>The first time the Tap starts, Windows Defender Firewall may ask about <em>ward-beck-audio-tab</em>.
+        Tick <strong>Private networks</strong> and press <strong>Allow</strong>. SAP, PTP and AES67 use
+        multicast and need this; the meters on this PC work either way.</p>
+      <figure>
+        <svg viewBox="0 0 640 210" role="img" aria-labelledby="w3">
+          <title id="w3">Windows Security firewall prompt with Private networks ticked and the Allow button</title>
+          <rect class="shot-frame" x="60" y="1" width="520" height="208" rx="8"/>
+          <rect class="shot-bar" x="60" y="1" width="520" height="30" rx="8"/>
+          <text class="d-ink" x="76" y="21" font-size="13">Windows Security</text>
+          <text class="d-ink" x="80" y="58" font-size="14" font-weight="700">Windows Defender Firewall has blocked some features of this app</text>
+          <text class="t-soft" x="80" y="82" font-size="13">Name:  ward-beck-audio-tab</text>
+          <text class="d-ink" x="80" y="108" font-size="13">Allow ward-beck-audio-tab to communicate on these networks:</text>
+          <rect class="d-accent" x="84" y="120" width="14" height="14" rx="2"/>
+          <path d="M87 127 l3 3 6 -7" stroke="var(--accent-ink)" stroke-width="2" fill="none"/>
+          <text class="d-ink" x="106" y="132" font-size="13" font-weight="700">Private networks, such as my home or work network</text>
+          <rect class="d-panel" x="84" y="144" width="14" height="14" rx="2"/>
+          <text class="t-soft" x="106" y="156" font-size="13">Public networks (leave unticked)</text>
+          <rect class="d-accent" x="380" y="172" width="90" height="28" rx="4"/>
+          <text class="d-accent-ink" x="425" y="191" font-size="13" text-anchor="middle" font-weight="700">Allow</text>
+          <rect class="d-panel" x="478" y="172" width="90" height="28" rx="4"/>
+          <text class="d-ink" x="523" y="191" font-size="13" text-anchor="middle">Cancel</text>
+        </svg>
+      </figure>
+    </li>
+    <li>
+      <h3>Read the result</h3>
+      <p>The window finishes with three <code>OK</code> lines. The last one gives the version and says the Tap answers.</p>
+      <figure>
+        <svg viewBox="0 0 640 230" role="img" aria-labelledby="w4">
+          <title id="w4">PowerShell output: executable installed, starts at sign-in, the Tap answers on 127.0.0.1 port 8467 version 2.2.1</title>
+          <rect class="term" x="1" y="1" width="638" height="228" rx="8"/>
+          <g class="mono" font-size="12.5">
+            <text class="t-ink" x="16" y="26">====================================================================</text>
+            <text class="t-ink" x="16" y="44"> Installing Ward-Beck Audio Tap (Windows)</text>
+            <text class="t-ink" x="16" y="62">====================================================================</text>
+            <text class="t-ok" x="16" y="86">OK</text><text class="t-ink" x="40" y="86">Executable installed to: C:\Users\you\AppData\Local\Ward-Beck\Audio Tap\…</text>
+            <text class="t-ok" x="16" y="106">OK</text><text class="t-ink" x="40" y="106">Starts at sign-in (Task Scheduler: 'Ward-Beck Audio Tap') and is running now</text>
+            <text class="t-ok" x="16" y="126">OK</text><text class="t-ink" x="40" y="126">The Tap answers on http://127.0.0.1:8467 (version 2.2.1,</text>
+            <text class="t-ink" x="40" y="144">audio: WASAPI loopback (driverless))</text>
+            <text class="t-ink" x="16" y="172">Open https://ward-beck.ca (or xtm.wbsps.ca) to meter and route.</text>
+            <text class="t-soft" x="16" y="192">Log file:    %LOCALAPPDATA%\Ward-Beck\Audio Tap\logs\tap.log</text>
+            <text class="t-soft" x="16" y="212">Diagnostics: http://127.0.0.1:8467/api/diagnostics/bundle</text>
+          </g>
+        </svg>
+        <figcaption>If the third line reads <code>!! The Tap did not answer yet</code>, wait ten seconds and open
+          <a href="http://127.0.0.1:8467/api/diagnostics">127.0.0.1:8467/api/diagnostics</a>. A slow first start is common while the firewall prompt is open.</figcaption>
+      </figure>
+    </li>
+    <li>
+      <h3>Open the web app</h3>
+      <p>Go to <a href="https://ward-beck.ca">ward-beck.ca</a> or <a href="https://xtm.wbsps.ca">xtm.wbsps.ca</a>.
+        If the browser asks to let the site reach devices on your local network, allow it: that is the Tap on this PC.</p>
+    </li>
+  </ol>
+
+  <h2 id="expect">What you will see</h2>
+  <div class="tablewrap card"><table>
+    <tr><th>Where</th><th>Expect</th></tr>
+    <tr><td>Desktop</td><td>No window and no tray icon. The Tap runs hidden from Task Scheduler.</td></tr>
+    <tr><td>Task Manager</td><td><code>ward-beck-audio-tab.exe</code>, a few MB of memory, under 1% CPU when idle.</td></tr>
+    <tr><td>After a restart</td><td>It starts on its own when you sign in. If it ever stops, Windows restarts it within a minute.</td></tr>
+    <tr><td>Web app</td><td>Connects; test tones, AES67 / SAP stream lists and PTP clocks fill in. Meters of the PC's own sound stay silent in 2.2.1.</td></tr>
+    <tr><td>Timing tab</td><td>PTP over UDP is heard. gPTP (raw Ethernet) is not, and the card says so.</td></tr>
+    <tr><td>Log</td><td><code>ERROR [cmd] 'pactl' is not installed</code> and similar lines for other Linux tools. Normal: those features are Linux-only.</td></tr>
+  </table></div>
+
+  <h2 id="where">Where things are</h2>
+  <div class="tablewrap card"><table>
+    <tr><th>What</th><th>Where</th></tr>
+    <tr><td>Program</td><td><code>%LOCALAPPDATA%\Ward-Beck\Audio Tap\ward-beck-audio-tab.exe</code></td></tr>
+    <tr><td>Log</td><td><code>%LOCALAPPDATA%\Ward-Beck\Audio Tap\logs\tap.log</code> (kept to 5 MB, the previous one is <code>tap.log.1</code>)</td></tr>
+    <tr><td>Start-up</td><td>Task Scheduler › Task Scheduler Library › <strong>Ward-Beck Audio Tap</strong></td></tr>
+    <tr><td>API</td><td><a href="http://127.0.0.1:8467">http://127.0.0.1:8467</a> (this PC only)</td></tr>
+  </table></div>
+  <p>Paste <code>%LOCALAPPDATA%\Ward-Beck\Audio Tap</code> into the File Explorer address bar to go straight there.</p>
+
+  <h2 id="update">Update</h2>
+  <p>Download the new zip, extract it, and run its <code>install.ps1</code> the same way. It stops the running
+    copy, replaces it and starts the new one. Logs are kept.</p>
+
+  <h2 id="remove">Remove</h2>
+  <p>Right-click <code>uninstall.ps1</code> (in the download, or in <code>%LOCALAPPDATA%\Ward-Beck\Audio Tap</code>)
+    › <strong>Run with PowerShell</strong>. It removes the start-up task and the program and keeps the
+    <code>logs</code> folder; delete that folder by hand if you want it gone.</p>
+
+  <h2 id="trouble">If something is wrong</h2>
+  <div class="tablewrap card"><table>
+    <tr><th>You see</th><th>Do this</th></tr>
+    <tr><td>The PowerShell window flashes and closes</td><td>Open PowerShell, <code>cd</code> to the extracted folder, and run
+      <code>powershell -ExecutionPolicy Bypass -File install.ps1</code> so the message stays on screen.</td></tr>
+    <tr><td><code>!! The Tap did not answer yet</code></td><td>Wait ten seconds, then open <a href="http://127.0.0.1:8467/api/diagnostics">127.0.0.1:8467/api/diagnostics</a>. Still nothing: send <code>tap.log</code>.</td></tr>
+    <tr><td>Port 8467 already in use</td><td>Another copy is running. Run <code>install.ps1</code> again; it stops the old one first.</td></tr>
+    <tr><td>Web app says no Tap</td><td>Check <a href="http://127.0.0.1:8467/api/diagnostics">127.0.0.1:8467/api/diagnostics</a> opens in the same browser, and allow local network access if the browser asked.</td></tr>
+    <tr><td>No streams or PTP clocks from the network</td><td>The firewall prompt was dismissed. Windows Security › Firewall &amp; network protection › Allow an app through firewall › tick <em>ward-beck-audio-tab</em> for Private. Check the network is set to Private, not Public.</td></tr>
+  </table></div>
+  <p>For any report, send the file from <a href="http://127.0.0.1:8467/api/diagnostics/bundle">127.0.0.1:8467/api/diagnostics/bundle</a>
+    (see <a href="index.html#help">If something is wrong</a>).</p>
+</main>
+
+<footer><div class="wrap">Copyright © 2026 Ward-Beck Systems (<a href="https://ward-beck.ca">Ward-Beck.ca</a>). All rights reserved.</div></footer>
+</body>
+</html>

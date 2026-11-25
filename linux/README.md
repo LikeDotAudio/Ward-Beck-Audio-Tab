@@ -24,3 +24,5 @@ two capabilities PTP listening needs. From a git checkout it builds the workspac
 | Remove | `bash uninstall.sh` |
 
 Also here: `run.sh` (build and run from a checkout) and `Dockerfile` / `docker-compose.yml` (the container).
+
+**Setup manual with pictures:** `manual/linux.html` in the download ([docs/manual/linux.html](../docs/manual/linux.html) here).

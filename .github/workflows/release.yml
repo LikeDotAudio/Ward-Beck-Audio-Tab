@@ -176,6 +176,7 @@ jobs:
           mkdir -p "dist/$N"
           cp target/release/${{ matrix.exe }} LICENSE "dist/$N/"
           cp $OS/* "dist/$N/"
+          cp -r docs/manual "dist/$N/manual"
           cd dist
           if [ $OS = windows ]; then 7z a "$N.zip" "$N" > /dev/null; else ditto -c -k --keepParent "$N" "$N.zip"; fi
           ls -l
@@ -204,6 +205,7 @@ jobs:
           mkdir -p "dist/$N"
           install -m 755 bins/ward-beck-audio-tab-* "dist/$N/"
           cp linux/install.sh linux/uninstall.sh linux/ward-beck-audio-tab.service linux/README.md LICENSE "dist/$N/"
+          cp -r docs/manual "dist/$N/manual"
           tar -C dist -czf "dist/$N.tar.gz" "$N"
           tar -tzf "dist/$N.tar.gz"
       - uses: actions/upload-artifact@v4
@@ -243,6 +245,9 @@ jobs:
 
           Windows and macOS are previews: they run the core (web app API, MXL rings, generators, AES67,
           SAP/NMOS/PTP/NTP, logging) but do not capture system audio yet.
+
+          Setup manual (pictures, what to expect on each system): open \`manual/index.html\` in the download,
+          or read it at https://github.com/$REPO/tree/main/docs/manual.
 
           After installing, open https://ward-beck.ca or https://xtm.wbsps.ca.
           Something wrong? Send the file from http://127.0.0.1:8467/api/diagnostics/bundle

@@ -1,0 +1,152 @@
+/*! Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved. */
+/* Ward-Beck Audio Tap manual: one sheet for every page. Brushed aluminium in light, anodised in dark. */
+:root {
+  --bg: #e9ecef;
+  --panel: #f7f8f9;
+  --panel-edge: #c9ced4;
+  --ink: #1d2328;
+  --ink-soft: #55606a;
+  --accent: #1a3b5c;
+  --accent-ink: #ffffff;
+  --live: #1f9d55;
+  --warn: #b7791f;
+  --stop: #c53030;
+  --code-bg: #1d2328;
+  --code-ink: #e6edf3;
+  --shot-bg: #ffffff;
+  --shot-bar: #d5dae0;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .08), 0 4px 14px rgba(0, 0, 0, .06);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15191d;
+    --panel: #1e2328;
+    --panel-edge: #333b43;
+    --ink: #e4e8ec;
+    --ink-soft: #9aa5b0;
+    --accent: #6fa8dc;
+    --accent-ink: #0d1318;
+    --live: #48bb78;
+    --warn: #ecc94b;
+    --stop: #fc8181;
+    --code-bg: #0d1013;
+    --code-ink: #e6edf3;
+    --shot-bg: #262c32;
+    --shot-bar: #363e46;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15191d; --panel: #1e2328; --panel-edge: #333b43; --ink: #e4e8ec; --ink-soft: #9aa5b0;
+  --accent: #6fa8dc; --accent-ink: #0d1318; --live: #48bb78; --warn: #ecc94b; --stop: #fc8181;
+  --code-bg: #0d1013; --code-ink: #e6edf3; --shot-bg: #262c32; --shot-bar: #363e46;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4); color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+a { color: var(--accent); }
+header.top {
+  background: var(--accent);
+  color: var(--accent-ink);
+  padding: 14px 16px;
+}
+header.top .wrap { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: baseline; }
+header.top a { color: inherit; text-decoration: none; }
+header.top .brand { font-weight: 700; letter-spacing: .04em; text-transform: uppercase; font-size: 15px; }
+header.top nav { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 15px; }
+header.top nav a[aria-current] { text-decoration: underline; text-underline-offset: 4px; }
+.wrap { max-width: 920px; margin: 0 auto; padding: 0 16px; }
+header.top .wrap { padding: 0; }
+main { padding: 28px 0 48px; }
+h1 { font-size: 30px; line-height: 1.2; margin: 0 0 6px; }
+h2 { font-size: 22px; margin: 40px 0 12px; padding-top: 8px; border-top: 1px solid var(--panel-edge); }
+h3 { font-size: 17px; margin: 22px 0 8px; }
+.lede { color: var(--ink-soft); font-size: 18px; margin: 0 0 18px; }
+.ver { display: inline-block; font-size: 13px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--panel-edge); color: var(--ink-soft); }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 10px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+}
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.os-card { text-decoration: none; color: inherit; display: block; }
+.os-card:hover { border-color: var(--accent); }
+.os-card h3 { margin: 6px 0 4px; }
+.os-card p { margin: 0; color: var(--ink-soft); font-size: 15px; }
+.os-card svg { width: 44px; height: 44px; }
+
+ol.steps { counter-reset: step; list-style: none; padding: 0; margin: 0; }
+ol.steps > li {
+  counter-increment: step;
+  position: relative;
+  padding: 0 0 22px 48px;
+}
+ol.steps > li::before {
+  content: counter(step);
+  position: absolute; left: 0; top: -2px;
+  width: 32px; height: 32px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink);
+  font-weight: 700; display: grid; place-items: center;
+}
+ol.steps > li > h3 { margin-top: 2px; }
+
+figure { margin: 12px 0; }
+figure svg { display: block; width: 100%; height: auto; max-width: 640px; }
+figcaption { color: var(--ink-soft); font-size: 14px; margin-top: 6px; }
+
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
+code { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 4px; padding: 1px 5px; overflow-wrap: anywhere; }
+pre { background: var(--code-bg); color: var(--code-ink); padding: 12px 14px; border-radius: 8px; overflow-x: auto; margin: 8px 0; }
+pre code { background: none; border: 0; padding: 0; color: inherit; }
+
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 15px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--panel-edge); vertical-align: top; }
+th { color: var(--ink-soft); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+
+.pill { display: inline-block; font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 99px; white-space: nowrap; }
+.pill.yes { background: color-mix(in srgb, var(--live) 18%, transparent); color: var(--live); }
+.pill.part { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+.pill.no { background: color-mix(in srgb, var(--stop) 16%, transparent); color: var(--stop); }
+
+.note { border-left: 4px solid var(--accent); background: var(--panel); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 14px 0; }
+.note.warn { border-left-color: var(--warn); }
+.note p { margin: 4px 0; }
+
+footer { color: var(--ink-soft); font-size: 13px; padding: 20px 0 40px; border-top: 1px solid var(--panel-edge); }
+
+/* Drawings: every colour comes from the tokens above. */
+.shot-frame { fill: var(--shot-bg); stroke: var(--panel-edge); }
+.shot-bar { fill: var(--shot-bar); }
+.term { fill: var(--code-bg); }
+.t-ink { fill: var(--code-ink); }
+.t-ok { fill: var(--live); }
+.t-warn { fill: var(--warn); }
+.t-soft { fill: var(--ink-soft); }
+.d-ink { fill: var(--ink); }
+.d-accent { fill: var(--accent); }
+.d-accent-ink { fill: var(--accent-ink); }
+.d-panel { fill: var(--panel); stroke: var(--panel-edge); }
+.d-line { stroke: var(--ink-soft); fill: none; stroke-width: 2; }
+.d-live { fill: var(--live); }
+.d-stop { fill: var(--stop); }
+svg text { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+svg .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+
+@media print {
+  header.top { background: none; color: #000; border-bottom: 2px solid #000; }
+  h2 { break-after: avoid; }
+  ol.steps > li, figure { break-inside: avoid; }
+}

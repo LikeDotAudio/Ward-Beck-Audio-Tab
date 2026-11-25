@@ -757,7 +757,7 @@ checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
 
 [[package]]
 name = "ward-beck-audio-tab"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "serde_json",
  "signal-hook",
@@ -789,7 +789,7 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wbs-aes67"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "mdns-sd",
  "serde_json",
@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "wbs-aoip"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "apkaudio-maclookup",
  "apkaudio-ptp",
@@ -821,7 +821,7 @@ dependencies = [
 
 [[package]]
 name = "wbs-cbc"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "serde_json",
  "ureq",
@@ -833,14 +833,14 @@ dependencies = [
 
 [[package]]
 name = "wbs-common"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "wbs-log",
 ]
 
 [[package]]
 name = "wbs-diagnostics"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "serde_json",
  "wbs-common",
@@ -855,7 +855,7 @@ version = "1.0.0"
 
 [[package]]
 name = "wbs-hardware"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "serde_json",
  "wbs-common",
@@ -866,7 +866,7 @@ dependencies = [
 
 [[package]]
 name = "wbs-listen"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "serde_json",
  "wbs-common",
@@ -877,14 +877,14 @@ dependencies = [
 
 [[package]]
 name = "wbs-log"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "wbs-mxl"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "libc",
  "memmap2",
@@ -900,11 +900,11 @@ dependencies = [
 
 [[package]]
 name = "wbs-net"
-version = "2.2.0"
+version = "2.2.1"
 
 [[package]]
 name = "wbs-nmos"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "serde_json",
  "wbs-common",
@@ -915,7 +915,7 @@ dependencies = [
 
 [[package]]
 name = "wbs-ntp"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "serde_json",
  "wbs-common",
@@ -926,7 +926,7 @@ dependencies = [
 
 [[package]]
 name = "wbs-patchbay"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "serde_json",
  "wbs-common",
@@ -939,7 +939,7 @@ dependencies = [
 
 [[package]]
 name = "wbs-pipeline"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "serde_json",
  "wbs-common",
@@ -950,7 +950,7 @@ dependencies = [
 
 [[package]]
 name = "wbs-plugin"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "serde_json",
  "wbs-common",
@@ -960,7 +960,7 @@ dependencies = [
 
 [[package]]
 name = "wbs-pyshim"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "libc",
  "serde_json",
@@ -969,7 +969,7 @@ dependencies = [
 
 [[package]]
 name = "wbs-receivers"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "serde_json",
  "socket2 0.5.10",
@@ -982,14 +982,14 @@ dependencies = [
 
 [[package]]
 name = "wbs-setup"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "wbs-plugin",
 ]
 
 [[package]]
 name = "wbs-sys"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "apkaudio-ptp",
  "libc",

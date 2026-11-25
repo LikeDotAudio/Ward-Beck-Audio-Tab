@@ -1,6 +1,6 @@
 {
   "name": "ward-beck-audio-tab",
-  "version": "2.0.0",
+  "version": "2.2.1",
   "description": "Ward-Beck Audio Tab — Virtual Audio Patchbay & Test Point Controller Daemon for Linux",
   "main": "target/release/ward-beck-audio-tab",
   "scripts": {

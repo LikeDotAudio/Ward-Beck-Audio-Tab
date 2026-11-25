@@ -1,0 +1,176 @@
+<!doctype html>
+<!-- Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio Tap for macOS</title>
+<meta name="description" content="Set up the Ward-Beck Audio Tap 2.2.1 on macOS 14.2 or newer: download, install, network permission, check, update and remove.">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="index.html">Ward-Beck Audio Tap</a>
+  <nav>
+    <a href="index.html">Manual</a>
+    <a href="windows.html">Windows</a>
+    <a href="macos.html" aria-current="page">macOS</a>
+    <a href="linux.html">Linux</a>
+  </nav>
+</div></header>
+
+<main class="wrap">
+  <h1>macOS setup</h1>
+  <p class="lede">macOS 14.2 (Sonoma) or newer, Apple silicon or Intel: one download for both. No administrator
+    password, no driver. About two minutes. <span class="ver">version 2.2.1 · preview</span></p>
+
+  <div class="note warn">
+    <p><strong>Preview.</strong> On macOS the Tap runs, starts at login, answers the web app, and handles
+      test tones, AES67 / SAP discovery and PTP. It does <strong>not yet meter the Mac's own sound</strong>.
+      When that arrives, macOS will ask once for permission to record system audio.
+      See <a href="index.html#expect">what to expect</a>.</p>
+  </div>
+
+  <h2 id="install">Install</h2>
+  <ol class="steps">
+    <li>
+      <h3>Download and unzip</h3>
+      <p>Download <a href="https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases/latest/download/ward-beck-audio-tap-macos.zip">ward-beck-audio-tap-macos.zip</a>.
+        Safari usually unzips it for you; otherwise double-click it in <em>Downloads</em>. You get a folder
+        <strong>ward-beck-audio-tap-macos</strong>.</p>
+      <figure>
+        <svg viewBox="0 0 640 190" role="img" aria-labelledby="m1">
+          <title id="m1">Finder window: the folder ward-beck-audio-tap-macos with ward-beck-audio-tab, install.sh, uninstall.sh, README.md, LICENSE and manual</title>
+          <rect class="shot-frame" x="1" y="1" width="638" height="188" rx="10"/>
+          <rect class="shot-bar" x="1" y="1" width="638" height="30" rx="10"/>
+          <circle class="d-stop" cx="20" cy="16" r="6"/><circle class="t-warn" cx="40" cy="16" r="6"/><circle class="d-live" cx="60" cy="16" r="6"/>
+          <text class="d-ink" x="320" y="21" font-size="13" text-anchor="middle">ward-beck-audio-tap-macos</text>
+          <g font-size="13" text-anchor="middle">
+            <rect class="d-accent" x="40" y="54" width="56" height="44" rx="4" opacity=".85"/>
+            <text class="d-ink" x="68" y="118">manual</text>
+            <rect class="term" x="140" y="54" width="56" height="44" rx="4"/>
+            <text class="t-ok mono" x="168" y="81" font-size="11">exec</text>
+            <text class="d-ink" x="168" y="118">ward-beck-</text><text class="d-ink" x="168" y="134">audio-tab</text>
+            <rect class="d-panel" x="240" y="50" width="56" height="52" rx="4" stroke-width="3" style="stroke:var(--accent)"/>
+            <text class="d-ink mono" x="268" y="81" font-size="11">.sh</text>
+            <text class="d-ink" x="268" y="118" font-weight="700">install.sh</text>
+            <rect class="d-panel" x="340" y="54" width="56" height="44" rx="4"/>
+            <text class="d-ink mono" x="368" y="81" font-size="11">.sh</text>
+            <text class="d-ink" x="368" y="118">uninstall.sh</text>
+            <rect class="d-panel" x="440" y="54" width="56" height="44" rx="4"/>
+            <text class="d-ink" x="468" y="118">README.md</text>
+            <rect class="d-panel" x="540" y="54" width="56" height="44" rx="4"/>
+            <text class="d-ink" x="568" y="118">LICENSE</text>
+          </g>
+          <text class="t-soft" x="268" y="166" font-size="12" text-anchor="middle">↑ drag this into Terminal in the next step</text>
+        </svg>
+      </figure>
+    </li>
+    <li>
+      <h3>Run the installer in Terminal</h3>
+      <p>Open <strong>Terminal</strong> (Spotlight: <kbd>⌘</kbd> <kbd>Space</kbd>, type <em>Terminal</em>, Return).
+        Type <code>bash</code> and a space, drag <code>install.sh</code> from the Finder window into Terminal,
+        then press <strong>Return</strong>. Or type it out:</p>
+      <pre><code>cd ~/Downloads/ward-beck-audio-tap-macos
+bash install.sh</code></pre>
+      <p>Don't double-click <code>install.sh</code> in Finder; it opens in a text editor and does nothing.
+        The installer clears the download quarantine itself, so Gatekeeper won't block the Tap even though 2.2.1 is not yet signed.</p>
+    </li>
+    <li>
+      <h3>Read the result</h3>
+      <figure>
+        <svg viewBox="0 0 640 220" role="img" aria-labelledby="m3">
+          <title id="m3">Terminal output: executable installed, starts at login as LaunchAgent ca.ward-beck.audio-tap, the Tap answers on 127.0.0.1 port 8467</title>
+          <rect class="term" x="1" y="1" width="638" height="218" rx="10"/>
+          <circle class="d-stop" cx="20" cy="16" r="6"/><circle class="t-warn" cx="40" cy="16" r="6"/><circle class="d-live" cx="60" cy="16" r="6"/>
+          <g class="mono" font-size="12.5">
+            <text class="t-soft" x="16" y="46">$ bash install.sh</text>
+            <text class="t-ink" x="16" y="66"> Installing Ward-Beck Audio Tap (macOS)</text>
+            <text class="t-ok" x="16" y="90">✔</text><text class="t-ink" x="34" y="90">Executable installed to: ~/Library/Application Support/Ward-Beck/…</text>
+            <text class="t-ok" x="16" y="110">✔</text><text class="t-ink" x="34" y="110">Starts at login (LaunchAgent ca.ward-beck.audio-tap) and is running now</text>
+            <text class="t-ok" x="16" y="130">✔</text><text class="t-ink" x="34" y="130">The Tap answers on http://127.0.0.1:8467</text>
+            <text class="t-ink" x="16" y="158">Open https://ward-beck.ca (or xtm.wbsps.ca) to meter and route.</text>
+            <text class="t-soft" x="16" y="180">Log file:    ~/Library/Logs/Ward-Beck Audio Tap/tap.log</text>
+            <text class="t-soft" x="16" y="200">Diagnostics: http://127.0.0.1:8467/api/diagnostics/bundle</text>
+          </g>
+        </svg>
+        <figcaption>A <code>⚠ The Tap did not answer yet</code> line usually means a permission prompt is waiting (next step). Answer it, then open
+          <a href="http://127.0.0.1:8467/api/diagnostics">127.0.0.1:8467/api/diagnostics</a>.</figcaption>
+      </figure>
+    </li>
+    <li>
+      <h3>Allow the network</h3>
+      <p>macOS may ask whether <em>ward-beck-audio-tab</em> may find and connect to devices on your local
+        network, or (with the firewall on) accept incoming connections. Press <strong>Allow</strong>. SAP, PTP and
+        AES67 use multicast and need it; the meters on this Mac work either way.</p>
+      <figure>
+        <svg viewBox="0 0 640 180" role="img" aria-labelledby="m4">
+          <title id="m4">macOS prompt asking to allow ward-beck-audio-tab to find devices on the local network, with Allow highlighted</title>
+          <rect class="shot-frame" x="150" y="1" width="340" height="178" rx="14"/>
+          <rect class="d-accent" x="296" y="18" width="48" height="48" rx="10"/>
+          <text class="d-accent-ink" x="320" y="49" font-size="18" font-weight="700" text-anchor="middle">WB</text>
+          <text class="d-ink" x="320" y="88" font-size="13" font-weight="700" text-anchor="middle">Allow "ward-beck-audio-tab" to find devices</text>
+          <text class="d-ink" x="320" y="105" font-size="13" font-weight="700" text-anchor="middle">on local networks?</text>
+          <rect class="d-panel" x="170" y="130" width="146" height="30" rx="7"/>
+          <text class="d-ink" x="243" y="150" font-size="13" text-anchor="middle">Don't Allow</text>
+          <rect class="d-accent" x="324" y="130" width="146" height="30" rx="7"/>
+          <text class="d-accent-ink" x="397" y="150" font-size="13" text-anchor="middle" font-weight="700">Allow</text>
+        </svg>
+        <figcaption>Changed your mind later: System Settings › Privacy &amp; Security › Local Network, or Network › Firewall › Options.</figcaption>
+      </figure>
+    </li>
+    <li>
+      <h3>Open the web app</h3>
+      <p>Go to <a href="https://ward-beck.ca">ward-beck.ca</a> or <a href="https://xtm.wbsps.ca">xtm.wbsps.ca</a>.
+        If the browser asks to let the site reach devices on your local network, allow it: that is the Tap on this Mac.</p>
+    </li>
+  </ol>
+
+  <h2 id="expect">What you will see</h2>
+  <div class="tablewrap card"><table>
+    <tr><th>Where</th><th>Expect</th></tr>
+    <tr><td>Dock and menu bar</td><td>Nothing. The Tap runs in the background as a LaunchAgent.</td></tr>
+    <tr><td>Activity Monitor</td><td><code>ward-beck-audio-tab</code>, a few MB of memory, under 1% CPU when idle.</td></tr>
+    <tr><td>Login Items</td><td>macOS may notify you that a background item was added. That's the Tap; leave it on in System Settings › General › Login Items.</td></tr>
+    <tr><td>After a restart</td><td>Starts on its own at login; if it stops, launchd starts it again.</td></tr>
+    <tr><td>Web app</td><td>Connects; test tones, AES67 / SAP stream lists and PTP clocks fill in. Meters of the Mac's own sound stay silent in 2.2.1.</td></tr>
+    <tr><td>Timing tab</td><td>PTP over UDP is heard. gPTP (raw Ethernet) is not, and the card says so.</td></tr>
+    <tr><td>Log</td><td><code>ERROR [cmd] 'pactl' is not installed</code> and similar lines for other Linux tools. Normal: those features are Linux-only.</td></tr>
+  </table></div>
+
+  <h2 id="where">Where things are</h2>
+  <div class="tablewrap card"><table>
+    <tr><th>What</th><th>Where</th></tr>
+    <tr><td>Program</td><td><code>~/Library/Application Support/Ward-Beck/Audio Tap/ward-beck-audio-tab</code></td></tr>
+    <tr><td>Log</td><td><code>~/Library/Logs/Ward-Beck Audio Tap/tap.log</code> (also opens in the Console app)</td></tr>
+    <tr><td>Start-up</td><td><code>~/Library/LaunchAgents/ca.ward-beck.audio-tap.plist</code></td></tr>
+    <tr><td>API</td><td><a href="http://127.0.0.1:8467">http://127.0.0.1:8467</a> (this Mac only)</td></tr>
+  </table></div>
+  <p>Is it loaded? In Terminal: <code>launchctl print gui/$(id -u)/ca.ward-beck.audio-tap | head</code></p>
+
+  <h2 id="update">Update</h2>
+  <p>Download and unzip the new version and run its <code>bash install.sh</code>. It stops the running copy,
+    replaces it and starts the new one. Logs are kept.</p>
+
+  <h2 id="remove">Remove</h2>
+  <pre><code>bash ~/Downloads/ward-beck-audio-tap-macos/uninstall.sh</code></pre>
+  <p>It stops the Tap, removes the LaunchAgent and the program, and keeps
+    <code>~/Library/Logs/Ward-Beck Audio Tap</code>; delete that folder by hand if you want it gone.</p>
+
+  <h2 id="trouble">If something is wrong</h2>
+  <div class="tablewrap card"><table>
+    <tr><th>You see</th><th>Do this</th></tr>
+    <tr><td><code>⚠ The Tap did not answer yet</code></td><td>Answer any permission prompt, wait ten seconds, open <a href="http://127.0.0.1:8467/api/diagnostics">127.0.0.1:8467/api/diagnostics</a>. Still nothing: send <code>tap.log</code> and <code>tap.log.stderr</code> from the log folder.</td></tr>
+    <tr><td>"cannot be opened because the developer cannot be verified"</td><td>You started the program by double-clicking it. Use <code>bash install.sh</code> instead; it clears that block.</td></tr>
+    <tr><td><code>Bootstrap failed: 5: Input/output error</code></td><td>An old copy is still loaded. Run <code>bash uninstall.sh</code>, then <code>bash install.sh</code>.</td></tr>
+    <tr><td>Older than macOS 14.2</td><td>The Tap needs 14.2 or newer (Apple menu › About This Mac).</td></tr>
+    <tr><td>No streams or PTP clocks from the network</td><td>The network prompt was refused. System Settings › Privacy &amp; Security › Local Network › turn on <em>ward-beck-audio-tab</em>.</td></tr>
+    <tr><td>Web app says no Tap</td><td>Check <a href="http://127.0.0.1:8467/api/diagnostics">127.0.0.1:8467/api/diagnostics</a> opens in the same browser, and allow local network access if the browser asked.</td></tr>
+  </table></div>
+  <p>For any report, send the file from <a href="http://127.0.0.1:8467/api/diagnostics/bundle">127.0.0.1:8467/api/diagnostics/bundle</a>
+    (see <a href="index.html#help">If something is wrong</a>).</p>
+</main>
+
+<footer><div class="wrap">Copyright © 2026 Ward-Beck Systems (<a href="https://ward-beck.ca">Ward-Beck.ca</a>). All rights reserved.</div></footer>
+</body>
+</html>

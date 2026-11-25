@@ -21,3 +21,5 @@ macOS will ask once for permission to record system audio.
 | Log | `~/Library/Logs/Ward-Beck Audio Tap/tap.log` |
 | Report a problem | send the file from http://127.0.0.1:8467/api/diagnostics/bundle |
 | Remove | `bash uninstall.sh` |
+
+**Setup manual with pictures:** `manual/macos.html` in the download ([docs/manual/macos.html](../docs/manual/macos.html) here).

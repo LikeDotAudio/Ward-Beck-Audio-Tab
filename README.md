@@ -26,6 +26,8 @@ All releases: <https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap/releases>.
 > SAP/NMOS/PTP/NTP, logging); system-audio capture (WASAPI loopback / Core Audio process tap) is
 > still being written.
 
+**Setup manual** (step-by-step pictures and what to expect on each system): [docs/manual](docs/manual/index.html), also in every download as `manual/index.html`.
+
 **Something wrong?** Send the file from <http://127.0.0.1:8467/api/diagnostics/bundle>.
 
 ## 🗂️ Layout: a host, plug-in applications, utilities, three builds

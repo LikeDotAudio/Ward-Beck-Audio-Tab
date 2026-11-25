@@ -20,3 +20,5 @@ capturing system audio through WASAPI loopback is still being written.
 | Log | `%LOCALAPPDATA%\Ward-Beck\Audio Tap\logs\tap.log` |
 | Report a problem | send the file from http://127.0.0.1:8467/api/diagnostics/bundle |
 | Remove | right-click `uninstall.ps1` › Run with PowerShell |
+
+**Setup manual with pictures:** `manual/windows.html` in the download ([docs/manual/windows.html](../docs/manual/windows.html) here).
