@@ -133,6 +133,14 @@ impl Plugin for Mxl {
                 Ok(v) => json_reply(&v),
                 Err(e) => json_error(400, &e),
             })),
+            // POD-33 low tone flow (MXL67-3): {hz: 400 | 100}
+            "/api/mxl/low_tone" => Some(loads_obj(body).map(|m| {
+                let hz = m.get("hz").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                match crate::set_low_tone_hz(hz) {
+                    Ok(h) => json_reply(&serde_json::json!({"hz": h})),
+                    Err(e) => json_error(400, &e),
+                }
+            })),
             _ => None,
         }
     }

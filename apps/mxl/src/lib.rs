@@ -1022,8 +1022,13 @@ impl Inner {
         &self.flows[1]
     }
 
-    fn bit_spitter(&self) -> &Arc<MxlFlow> {
+    /// POD-33 400 / 100 Hz (the router's MXL67-3), written with the 1 kHz tone.
+    fn low_tone(&self) -> &Arc<MxlFlow> {
         &self.flows[2]
+    }
+
+    fn bit_spitter(&self) -> &Arc<MxlFlow> {
+        &self.flows[3]
     }
 
     fn edge_bridge_worker(self: Arc<Self>) {
@@ -1079,13 +1084,22 @@ impl Inner {
         const QUANTUM: usize = 256;
         let sample_rate = 48000.0f64;
         let mut tone = wbs_generators::Tone::new(1000.0, -18.0, sample_rate);
+        let mut low_hz = low_tone_hz();
+        let mut low = wbs_generators::Tone::new(low_hz as f64, -18.0, sample_rate);
         let interval = QUANTUM as f64 / sample_rate;
         let start = Instant::now();
         let mut k = 0u64;
         let mut ch = vec![0.0f64; QUANTUM];
+        let mut lo = vec![0.0f64; QUANTUM];
         while self.running() && self.tone_enabled.load(Ordering::Acquire) {
             tone.fill(&mut ch);
             self.tone().write_frames(&ch, &ch);
+            if low_tone_hz() != low_hz {
+                low_hz = low_tone_hz();
+                low = wbs_generators::Tone::new(low_hz as f64, -18.0, sample_rate);
+            }
+            low.fill(&mut lo);
+            self.low_tone().write_frames(&lo, &lo);
             k += 1;
             sleep_until(start, k, interval);
         }
@@ -1120,6 +1134,21 @@ impl Inner {
     }
 }
 
+static LOW_TONE_HZ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(400);
+
+/// The POD-33 low tone flow's frequency (400 or 100 Hz, the router's MXL67-3 switch).
+pub fn low_tone_hz() -> u32 {
+    LOW_TONE_HZ.load(Ordering::Relaxed)
+}
+
+pub fn set_low_tone_hz(hz: u32) -> Result<u32, String> {
+    if hz != 400 && hz != 100 {
+        return Err("hz must be 400 or 100".into());
+    }
+    LOW_TONE_HZ.store(hz, Ordering::Relaxed);
+    Ok(hz)
+}
+
 impl MxlEngine {
     /// Builds an engine rooted at `shm_base` (Python: MxlEngine(domain_id) with SHM_BASE_DIR),
     /// creating the three engine flows and publishing the Ward-Beck Test Signals domain.
@@ -1130,6 +1159,8 @@ impl MxlEngine {
         let mut flows = vec![
             mk("wbs-flow-master-stereo", "Ward-Beck Master Bus (Float32 Stereo)", "program"),
             mk("wbs-flow-ref-tone", "Ward-Beck POD-33 Precision Tone Flow (Float32 Stereo)", "generator"),
+            // The router's transmitters in order (MXL67-1 … 4): AES67 groups .1 … .4 follow this list
+            mk("wbs-flow-ref-tone-low", "Ward-Beck POD-33 400 / 100 Hz Tone Flow (Float32 Stereo)", "generator"),
             mk(
                 "wbs-flow-bit-spitter",
                 "Ward-Beck ABB-1 Audio Bit Buddy & ABP-1 Bit Spitter Flow (Float32 Stereo)",
@@ -1393,7 +1424,7 @@ impl MxlEngine {
             }
         }
         let mut cleared = Vec::new();
-        for f in [inner.tone(), inner.bit_spitter()] {
+        for f in [inner.tone(), inner.bit_spitter(), inner.low_tone()] {
             f.clear();
             cleared.push(f.flow_id.clone());
         }
