@@ -30,9 +30,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Generators/ (crate wbs-generators) and PTP/ (apkaudio-ptp); mxl-hands-on is large and unused here.
+      # Generators/ (crate wbs-generators), PTP/ (apkaudio-ptp) and modules/<Mxxx> (the module plugins' DSP, for the inserts); mxl-hands-on is large and unused here.
       - name: Fetch the Generators and PTP submodules
-        run: git submodule update --init Generators PTP
+        run: git submodule update --init Generators PTP modules/M466 modules/M467 modules/M462 modules/M462A modules/M462B
 
       - uses: docker/setup-qemu-action@v3
         with:

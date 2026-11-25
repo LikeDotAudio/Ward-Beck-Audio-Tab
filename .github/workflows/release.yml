@@ -59,7 +59,7 @@ jobs:
 
       # Generators/ and PTP/ are path dependencies; mxl-hands-on is large and not needed.
       - name: Submodules
-        run: git submodule update --init Generators PTP
+        run: git submodule update --init Generators PTP modules/M466 modules/M467 modules/M462 modules/M462A modules/M462B
 
       - uses: dtolnay/rust-toolchain@stable
         with:

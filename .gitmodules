@@ -7,3 +7,18 @@
 [submodule "PTP"]
 	path = PTP
 	url = https://github.com/LikeDotAudio/APK.plugin.clock.PTP.git
+[submodule "modules/M466"]
+	path = modules/M466
+	url = https://github.com/WardBeckSystems/MODULES.DYNAMICS.M466.git
+[submodule "modules/M467"]
+	path = modules/M467
+	url = https://github.com/WardBeckSystems/MODULES.DYNAMICS.M467.git
+[submodule "modules/M462"]
+	path = modules/M462
+	url = https://github.com/WardBeckSystems/MODULES.FILTERS.M462.git
+[submodule "modules/M462A"]
+	path = modules/M462A
+	url = https://github.com/WardBeckSystems/MODULES.FILTERS.M462A.git
+[submodule "modules/M462B"]
+	path = modules/M462B
+	url = https://github.com/WardBeckSystems/MODULES.FILTERS.M462B.git
