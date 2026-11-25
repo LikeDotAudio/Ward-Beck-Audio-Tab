@@ -299,16 +299,27 @@ pub fn nmos_sources(nodes: &[Value]) -> Vec<Value> {
     out
 }
 
-/// MXL audio flows in every other domain (engine.scan_all_domains()) as sources.
+/// A Ward-Beck writer's flow: UUIDs from the 25030… block, or ids starting "wbs-".
+/// Everything else (a CBC file player writing into the Ward-Beck domain, say) is foreign.
+pub fn is_wbs_flow_id(id: &str) -> bool {
+    let low = id.to_lowercase();
+    low.starts_with("25030") || low.starts_with("wbs-")
+}
+
+/// MXL audio flows in every other domain (engine.scan_all_domains()) as sources, classified per
+/// flow. A flow seen twice (same flow_id in nested / merged domains, or the Tap's own) is listed once.
 pub fn mxl_sources(all_domains: &Value, own_domain: &str) -> Vec<Value> {
     let mut out = Vec::new();
     let Some(doms) = all_domains.as_object() else { return out };
+    let fid_of = |flw: &Value| py::or(sget(flw, "flow_id"), sget(flw, "id")).cloned().unwrap_or(Value::Null);
+    let mut seen: std::collections::HashSet<String> = doms
+        .get(own_domain)
+        .map(|own| arr(sget(own, "flows")).iter().map(|f| py::str_of(&fid_of(f))).collect())
+        .unwrap_or_default();
     for (dom_lbl, dom) in doms {
         if dom_lbl == own_domain {
             continue;
         }
-        let low = dom_lbl.to_lowercase();
-        let is_wbs = low.contains("ward-beck") || low.contains("wbs");
         for flw in arr(sget(dom, "flows")) {
             let s = |k: &str| match sget(flw, k) {
                 Some(Value::String(x)) => x.to_lowercase(),
@@ -318,18 +329,23 @@ pub fn mxl_sources(all_domains: &Value, own_domain: &str) -> Vec<Value> {
             if !(s("format").contains("audio") || s("media_type").contains("audio") || has_cc) {
                 continue;
             }
-            let flw_id = py::or(sget(flw, "flow_id"), sget(flw, "id")).cloned().unwrap_or(Value::Null);
+            let flw_id = fid_of(flw);
+            let fid = py::str_of(&flw_id);
+            if !seen.insert(fid.clone()) {
+                continue;
+            }
             let flw_lbl = match sget(flw, "label") {
                 Some(l) if py::truthy(l) => l.clone(),
-                _ => Value::String(py::head(&py::str_of(&flw_id), 8)),
+                _ => Value::String(py::head(&fid, 8)),
             };
+            let is_wbs = is_wbs_flow_id(&fid);
             let prefix = if is_wbs {
-                "\u{26A1} WBS TEST SIGNAL".to_string()
+                format!("\u{26A1} WBS TEST SIGNAL ({dom_lbl})")
             } else {
                 format!("\u{1F39B}\u{FE0F} CBC MXL ({dom_lbl})")
             };
             let mut m = Map::new();
-            m.insert("name".into(), json!(format!("mxl:{}:{}", dom_lbl, py::str_of(&flw_id))));
+            m.insert("name".into(), json!(format!("mxl:{}:{}", dom_lbl, fid)));
             m.insert(
                 "description".into(),
                 json!(format!(
@@ -1559,9 +1575,41 @@ mod tests {
         assert_eq!(s.len(), 2);
         assert_eq!(
             py::dumps(&s[0]),
-            r#"{"name": "mxl:Ward-Beck Test Signals:25030044-0440-4416-8000-000000000009", "description": "\u26a1 WBS TEST SIGNAL: L \u2014 D", "mxl": true, "domain": "Ward-Beck Test Signals", "flow_id": "25030044-0440-4416-8000-000000000009", "flow_label": "L", "is_wbs_test_signal": true}"#
+            r#"{"name": "mxl:Ward-Beck Test Signals:25030044-0440-4416-8000-000000000009", "description": "\u26a1 WBS TEST SIGNAL (Ward-Beck Test Signals): L \u2014 D", "mxl": true, "domain": "Ward-Beck Test Signals", "flow_id": "25030044-0440-4416-8000-000000000009", "flow_label": "L", "is_wbs_test_signal": true}"#
         );
         assert_eq!(s[1]["description"], "\u{1F39B}\u{FE0F} CBC MXL (exercise-4): abcdefgh \u{2014} ");
+    }
+
+    #[test]
+    fn mxl_sources_classify_per_flow_and_dedupe() {
+        let doms: Value = serde_json::from_str(
+            r#"{"own": {"flows": [{"flow_id": "own-1", "format": "urn:x-nmos:format:audio"}]},
+                "Ward-Beck Test Signals": {"flows": [
+                    {"flow_id": "25030044-0440-4416-8000-000000000001", "label": "TONE", "format": "urn:x-nmos:format:audio"},
+                    {"flow_id": "d72362ef-1111-2222-3333-444444444444", "label": "clip-player-audio", "format": "urn:x-nmos:format:audio"},
+                    {"flow_id": "d72362ef-5555-2222-3333-444444444444", "label": "clip-player-video", "format": "urn:x-nmos:format:video"},
+                    {"id": "wbs-bitbuddy", "channel_count": 2}]},
+                "domain_1": {"flows": [
+                    {"flow_id": "d72362ef-1111-2222-3333-444444444444", "label": "clip-player-audio", "format": "urn:x-nmos:format:audio"},
+                    {"flow_id": "own-1", "format": "urn:x-nmos:format:audio"}]}}"#,
+        )
+        .unwrap();
+        let s = mxl_sources(&doms, "own");
+        let names: Vec<&str> = s.iter().map(|x| x["name"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            [
+                "mxl:Ward-Beck Test Signals:25030044-0440-4416-8000-000000000001",
+                "mxl:Ward-Beck Test Signals:d72362ef-1111-2222-3333-444444444444",
+                "mxl:Ward-Beck Test Signals:wbs-bitbuddy",
+            ]
+        );
+        assert_eq!(s[0]["is_wbs_test_signal"], true);
+        assert_eq!(s[1]["is_wbs_test_signal"], false);
+        assert_eq!(s[1]["description"], "\u{1F39B}\u{FE0F} CBC MXL (Ward-Beck Test Signals): clip-player-audio \u{2014} ");
+        assert_eq!(s[2]["is_wbs_test_signal"], true);
+        assert!(s[2]["description"].as_str().unwrap().starts_with("\u{26A1} WBS TEST SIGNAL (Ward-Beck Test Signals): wbs-bitb"));
+        assert!(is_wbs_flow_id("WBS-x") && !is_wbs_flow_id("d72362ef"));
     }
 
     #[test]
