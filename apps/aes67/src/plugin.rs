@@ -30,6 +30,9 @@ impl services::Aes67 for Aes67 {
     fn stop_all(&self) -> Vec<String> {
         crate::stop_all()
     }
+    fn groups(&self) -> Vec<String> {
+        crate::groups().iter().map(|g| g.to_string()).collect()
+    }
 }
 
 /// Plug the AES67 transmitters into the host.

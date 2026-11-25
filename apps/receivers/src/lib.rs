@@ -351,6 +351,7 @@ struct TpState {
     channels: usize,
     packet_frames: usize,
     lost: u64,
+    group: Option<String>, // aoip: the multicast group being received
 }
 
 impl TpState {
@@ -407,6 +408,7 @@ impl TestPoint {
                 channels: 2,
                 packet_frames: 0,
                 lost: 0,
+                group: None,
             }),
             stop: AtomicBool::new(false),
             child_pid: Mutex::new(None),
@@ -666,6 +668,7 @@ impl TestPoint {
             st.sample_rate = sample_rate;
             st.source = source;
             st.packet_frames = packet_frames;
+            st.group = Some(grp.clone());
             st.ring = Some(TapRing::new(channels, packet_frames, sample_rate, RING_SECONDS));
         }
 
@@ -1103,6 +1106,13 @@ pub fn pcm_since_in(slot: usize, since: i64, max_frames: usize) -> Option<PcmChu
     let tp = current_in(slot)?;
     let s = lock(&tp.st);
     s.ring.as_ref()?.pcm_since(since, max_frames)
+}
+
+/// The multicast group slot `slot` is receiving (None: not receiving RTP).
+pub fn source_group_in(slot: usize) -> Option<String> {
+    let tp = current_in(slot)?;
+    let s = lock(&tp.st);
+    s.group.clone()
 }
 
 pub fn fold_snapshot_in(slot: usize, bins: usize) -> Option<Value> {

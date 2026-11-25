@@ -117,6 +117,9 @@ impl services::Receivers for Receivers {
             .map(|slot| crate::pcm_since_in(slot, since, max_frames))
             .or_else(|| crate::slot_of_fold(flow_id).map(|slot| crate::fold_pcm_since_in(slot, since, max_frames)))
     }
+    fn source_group(&self, flow_id: &str) -> Option<String> {
+        crate::slot_of_flow(flow_id).or_else(|| crate::slot_of_fold(flow_id)).and_then(crate::source_group_in)
+    }
 }
 
 /// Plug the test point and the network / MoIP receivers into the host.

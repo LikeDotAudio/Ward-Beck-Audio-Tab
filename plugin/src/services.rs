@@ -153,6 +153,11 @@ pub trait Receivers: Send + Sync {
     fn pcm(&self, _flow_id: &str, _since: i64, _max_frames: usize) -> Option<Option<PcmChunk>> {
         None
     }
+    /// The multicast group the receiver of `flow_id` (its own or its AMS-81 fold-down flow)
+    /// is receiving right now, if any.
+    fn source_group(&self, _flow_id: &str) -> Option<String> {
+        None
+    }
 }
 slot!(Receivers, receivers, provide_receivers, RECEIVERS, NoReceivers);
 
@@ -162,6 +167,10 @@ pub trait Aes67: Send + Sync {
         Value::Object(Map::new())
     }
     fn stop_all(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// This TAP's transmitter groups ("239.69.x.n"). Takes no lock: safe from anywhere.
+    fn groups(&self) -> Vec<String> {
         Vec::new()
     }
 }

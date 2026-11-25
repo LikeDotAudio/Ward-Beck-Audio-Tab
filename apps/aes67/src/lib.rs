@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
 //! AES67 transmitters: one per engine MXL flow, the router's MXL67-1 … 4 (Repeater,
-//! POD-33 1 kHz, POD-33 400 / 100 Hz, Bit Spitter). Each reads its flow's ring behind the write head and sends
+//! POD-33 1 kHz, POD-33 400 / 100 Hz, Bit Spitter), and the loop outs MXL67-5 / 6 that
+//! re-send the network / MoIP receivers' AMS-81 stereo fold-downs (read through the
+//! receivers service). A loop out whose receiver is taking one of this TAP's own groups
+//! stays silent ("loop: receiving its own stream"). Each reads its flow's ring behind the write head and sends
 //! RTP L24 / 48 kHz / 1 ms packets to its own multicast group, announced by SAP/SDP
 //! (RFC 2974 / RFC 4566) the way AES67, RAVENNA and Dante (AES67 mode) expect.
 //!
@@ -12,7 +15,7 @@
 //!   SAP       239.255.255.255:9875 every 30 s while running, deletion on stop
 //!   Bonjour   RAVENNA style: _rtsp._tcp.local. with subtype _ravenna_session, one record
 //!             per running transmitter, pointing at a small RTSP responder (OPTIONS and
-//!             DESCRIBE of rtsp://host:port/by-name/<name> or /by-id/<1-4>) on TCP
+//!             DESCRIBE of rtsp://host:port/by-name/<name> or /by-id/<1-6>) on TCP
 //!             WBS_AES67_RTSP_PORT (9010). No port, no Bonjour: SAP carries on alone.
 //!   name      each transmitter has a name (default: the flow's short label), the SDP's s=.
 //!             Renaming bumps the SDP version (o=), withdraws the old SAP announcement,
@@ -53,6 +56,9 @@ const MAX_QUEUE_FRAMES: usize = 9600; // 200 ms
 /// Other flows (the 8-channel Bit Spitter, the multichannel test flows) do not.
 pub const ENGINE_FLOWS: [&str; 4] =
     ["wbs-flow-master-stereo", "wbs-flow-ref-tone", "wbs-flow-ref-tone-low", "wbs-flow-bit-spitter"];
+/// The loop outs, MXL67-5 / 6 (groups .5 / .6): the receivers' AMS-81 fold-downs, 48 kHz stereo.
+pub const LOOP_OUTS: [(&str, &str); 2] = [("wbs-network-ams81", "Network loop out"), ("wbs-moip-ams81", "MoIP loop out")];
+const LOOP_ERROR: &str = "loop: receiving its own stream";
 /// RAVENNA's Bonjour type: _rtsp._tcp with the _ravenna_session subtype.
 const MDNS_TYPE: &str = "_ravenna_session._sub._rtsp._tcp.local.";
 const NAME_MAX: usize = 64;
@@ -92,6 +98,25 @@ pub fn group_for(index: usize) -> Ipv4Addr {
     }
     let host = host_v4().octets();
     Ipv4Addr::new(239, 69, host[3], n)
+}
+
+/// Every group this TAP transmits on (.1 … .6), whether running or not.
+pub fn groups() -> Vec<Ipv4Addr> {
+    (0..ENGINE_FLOWS.len() + LOOP_OUTS.len()).map(group_for).collect()
+}
+
+/// A receiver taking `source` would feed one of our own groups back into a loop out.
+pub fn is_loop(source: Option<&str>, ours: &[Ipv4Addr]) -> bool {
+    source.and_then(|s| s.trim().parse::<Ipv4Addr>().ok()).is_some_and(|g| ours.contains(&g))
+}
+
+/// Where a transmitter's audio comes from.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Source {
+    /// An MXL engine ring (services::mxl).
+    Engine,
+    /// A receiver's fold-down ring (services::receivers).
+    LoopOut,
 }
 
 /// 32-bit FNV-1a of the flow id (stable SSRC, SAP message id hash and SDP session id).
@@ -203,6 +228,7 @@ struct Tx {
     group: Ipv4Addr,
     channels: usize,
     sample_rate: u32,
+    source: Source,
     running: Arc<AtomicBool>,
     packets: Arc<AtomicU64>,
     underruns: Arc<AtomicU64>,
@@ -223,6 +249,7 @@ impl Tx {
         json!({
             "flow_id": self.flow_id,
             "label": self.label,
+            "loop_out": self.source == Source::LoopOut,
             "name": self.name,
             "version": self.version,
             "running": on,
@@ -256,29 +283,35 @@ fn state() -> &'static Mutex<State> {
     static S: OnceLock<Mutex<State>> = OnceLock::new();
     S.get_or_init(|| {
         let mxl = services::mxl();
-        let txs = ENGINE_FLOWS
+        let tx = |index: usize, flow_id: &str, label: String, channels: usize, sample_rate: u32, source: Source| Tx {
+            flow_id: flow_id.to_string(),
+            name: label.clone(),
+            label,
+            version: 0,
+            mdns: None,
+            group: group_for(index),
+            channels,
+            sample_rate,
+            source,
+            running: Arc::new(AtomicBool::new(false)),
+            packets: Arc::new(AtomicU64::new(0)),
+            underruns: Arc::new(AtomicU64::new(0)),
+            trims: Arc::new(AtomicU64::new(0)),
+            rate: Arc::new(AtomicU64::new(1.0f64.to_bits())),
+            started_at: None,
+            error: Arc::new(Mutex::new(None)),
+            thread: None,
+        };
+        let mut txs: Vec<Tx> = ENGINE_FLOWS
             .iter()
             .enumerate()
             .filter_map(|(i, id)| mxl.flow_info(id).map(|f| (i, f)))
-            .map(|(index, f)| Tx {
-                flow_id: f.flow_id.clone(),
-                label: short_label(&f.label),
-                name: short_label(&f.label),
-                version: 0,
-                mdns: None,
-                group: group_for(index),
-                channels: f.channel_count,
-                sample_rate: f.sample_rate,
-                running: Arc::new(AtomicBool::new(false)),
-                packets: Arc::new(AtomicU64::new(0)),
-                underruns: Arc::new(AtomicU64::new(0)),
-                trims: Arc::new(AtomicU64::new(0)),
-                rate: Arc::new(AtomicU64::new(1.0f64.to_bits())),
-                started_at: None,
-                error: Arc::new(Mutex::new(None)),
-                thread: None,
-            })
+            .map(|(i, f)| tx(i, &f.flow_id, short_label(&f.label), f.channel_count, f.sample_rate, Source::Engine))
             .collect();
+        // The loop outs always exist (by-id 5 / 6); they send once their receiver has audio.
+        for (k, (id, label)) in LOOP_OUTS.iter().enumerate() {
+            txs.push(tx(ENGINE_FLOWS.len() + k, id, label.to_string(), 2, 48000, Source::LoopOut));
+        }
         Mutex::new(State { txs, sap_thread: None })
     })
 }
@@ -312,6 +345,7 @@ pub fn any_running() -> bool {
 #[allow(clippy::too_many_arguments)]
 fn sender(
     flow_id: String,
+    source: Source,
     group: Ipv4Addr,
     sample_rate: u32,
     running: Arc<AtomicBool>,
@@ -336,7 +370,18 @@ fn sender(
     let dest = SockAddr::from(SocketAddrV4::new(group, port()));
     let ssrc = fnv(&flow_id);
     let eng = services::mxl();
-    let mut cursor: i64 = eng.flow_pcm(&flow_id, -1, 256).map(|c| c.cursor).unwrap_or(0);
+    let fetch = |since: i64, max: usize| match source {
+        Source::Engine => eng.flow_pcm(&flow_id, since, max),
+        Source::LoopOut => services::receivers().pcm(&flow_id, since, max).flatten(),
+    };
+    // A loop out starts unanchored (-1): its receiver may not be running yet.
+    let mut cursor: i64 = match source {
+        Source::Engine => fetch(-1, 256).map(|c| c.cursor).unwrap_or(0),
+        Source::LoopOut => fetch(-1, 256).map(|c| c.cursor).unwrap_or(-1),
+    };
+    let ours = groups();
+    let mut looped = false;
+    let mut loop_check = Instant::now();
     let mut queue: VecDeque<Vec<f32>> = VecDeque::with_capacity(MAX_QUEUE_FRAMES * 2);
     let mut nch = 2usize;
     let mut seq: u16 = (ssrc & 0xffff) as u16;
@@ -355,11 +400,39 @@ fn sender(
     let mut next = Instant::now();
 
     while running.load(Ordering::Acquire) && !wbs_common::is_shutting_down() {
+        // Loop outs: never send while the receiver takes one of our own groups.
+        if source == Source::LoopOut && loop_check.elapsed() >= Duration::from_millis(250) {
+            loop_check = Instant::now();
+            let now_looped = is_loop(services::receivers().source_group(&flow_id).as_deref(), &ours);
+            if now_looped != looped {
+                looped = now_looped;
+                let mut e = error.lock().unwrap();
+                if looped {
+                    *e = Some(LOOP_ERROR.into());
+                    println!("[AES67] TX {flow_id}: {LOOP_ERROR}, not sending");
+                } else if e.as_deref() == Some(LOOP_ERROR) {
+                    *e = None;
+                }
+            }
+        }
         // Drain whatever the ring has written since the last pass (planar f32 LE).
-        if let Some(chunk) = eng.flow_pcm(&flow_id, cursor, 4800) {
+        let got = fetch(cursor, 4800);
+        if got.is_none() && source == Source::LoopOut {
+            cursor = -1; // receiver stopped: re-anchor on its next ring
+        }
+        if let Some(chunk) = got {
             cursor = chunk.cursor;
             nch = chunk.channels.max(1);
-            let n = chunk.frames;
+            let n = if source == Source::LoopOut && chunk.sample_rate != sample_rate {
+                *error.lock().unwrap() = Some(format!("receiver at {} Hz: loop out sends {sample_rate} Hz only", chunk.sample_rate));
+                0
+            } else {
+                let mut e = error.lock().unwrap();
+                if e.as_deref().is_some_and(|m| m.starts_with("receiver at ")) {
+                    *e = None;
+                }
+                chunk.frames
+            };
             if n > 0 {
                 let f32at = |c: usize, i: usize| {
                     let o = (c * n + i) * 4;
@@ -405,7 +478,7 @@ fn sender(
                 f
             };
             let pkt = rtp_packet(seq, ts, ssrc, &frames);
-            if let Some(s) = &sock {
+            if let Some(s) = sock.as_ref().filter(|_| !looped) {
                 if let Err(e) = s.send_to(&pkt, &dest) {
                     *error.lock().unwrap() = Some(format!("send: {e}"));
                 }
@@ -485,10 +558,10 @@ fn start_tx(st: &mut State, i: usize) {
     t.rate.store(1.0f64.to_bits(), Ordering::Relaxed);
     t.running.store(true, Ordering::Release);
     t.started_at = Some(wbs_common::now_f64());
-    let (id, g, sr) = (t.flow_id.clone(), t.group, t.sample_rate);
+    let (id, src, g, sr) = (t.flow_id.clone(), t.source, t.group, t.sample_rate);
     let (r, p, u, tr, ra, e) =
         (t.running.clone(), t.packets.clone(), t.underruns.clone(), t.trims.clone(), t.rate.clone(), t.error.clone());
-    t.thread = Some(std::thread::spawn(move || sender(id, g, sr, r, p, u, tr, ra, e)));
+    t.thread = Some(std::thread::spawn(move || sender(id, src, g, sr, r, p, u, tr, ra, e)));
     println!("[AES67] TX {} -> {}:{} (L24/{}/{} 1 ms)", t.flow_id, t.group, port(), t.sample_rate, t.channels);
     bonjour_register(t, i);
     ensure_sap_thread(st);
@@ -692,7 +765,7 @@ fn bonjour_unregister(t: &mut Tx) {
 #[derive(Debug, PartialEq)]
 pub enum RtspTarget {
     ByName(String),
-    /// 1-based, the router's MXL67-n.
+    /// 1-based, the router's MXL67-n (1 … 6).
     ById(usize),
 }
 
@@ -963,6 +1036,20 @@ mod tests {
     fn engine_flows_only() {
         assert_eq!(ENGINE_FLOWS[2], "wbs-flow-ref-tone-low");
         assert_eq!(group_for(3).octets()[3], 4);
+    }
+
+    #[test]
+    fn loop_outs() {
+        assert_eq!(LOOP_OUTS.map(|l| l.0), ["wbs-network-ams81", "wbs-moip-ams81"]);
+        let g = super::groups();
+        assert_eq!(g.len(), 6);
+        assert_eq!(g.iter().map(|x| x.octets()[3]).collect::<Vec<_>>(), [1, 2, 3, 4, 5, 6]);
+        let ours = [Ipv4Addr::new(239, 69, 7, 1), Ipv4Addr::new(239, 69, 7, 5)];
+        assert!(is_loop(Some("239.69.7.5"), &ours));
+        assert!(is_loop(Some(" 239.69.7.1"), &ours));
+        assert!(!is_loop(Some("239.69.7.9"), &ours));
+        assert!(!is_loop(Some("not an ip"), &ours));
+        assert!(!is_loop(None, &ours));
     }
 
     #[test]

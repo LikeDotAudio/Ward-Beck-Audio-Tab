@@ -1650,11 +1650,28 @@ pub fn ptp_leader() -> Option<(String, i64)> {
     pick_ptp_leader(&snapshot()["ptp"]["grandmasters"], iface.as_deref())
 }
 
-/// Thread-safe JSON-ready view of everything heard on the multicast groups.
+/// Thread-safe JSON-ready view of everything heard on the multicast groups. SAP sessions
+/// this TAP announces itself carry "own": true (a receiver of one would loop).
 pub fn snapshot() -> Value {
     let now = now_f64();
     let dante = dante_ips();
-    registry().snapshot_at(now, &dante)
+    let mut v = registry().snapshot_at(now, &dante);
+    let groups = wbs_plugin::services::aes67().groups();
+    if let Some(sessions) = v["sap"]["sessions"].as_array_mut() {
+        mark_own(sessions, &wbs_net::host_v4().to_string(), &groups);
+    }
+    v
+}
+
+/// "own": true on the sessions announced from `host` to one of `groups`.
+fn mark_own(sessions: &mut [Value], host: &str, groups: &[String]) {
+    for s in sessions.iter_mut() {
+        let own = s["origin_ip"].as_str() == Some(host)
+            && s["multicast_ip"].as_str().is_some_and(|g| groups.iter().any(|x| x == g));
+        if let Some(m) = s.as_object_mut() {
+            m.insert("own".into(), json!(own));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1664,6 +1681,17 @@ pub fn snapshot() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn own_sessions_marked() {
+        let mut s = vec![
+            json!({"origin_ip": "10.0.0.5", "multicast_ip": "239.69.5.5"}),
+            json!({"origin_ip": "10.0.0.9", "multicast_ip": "239.69.5.5"}),
+            json!({"origin_ip": "10.0.0.5", "multicast_ip": "239.1.1.1"}),
+        ];
+        mark_own(&mut s, "10.0.0.5", &["239.69.5.1".into(), "239.69.5.5".into()]);
+        assert_eq!(s.iter().map(|x| x["own"].as_bool().unwrap()).collect::<Vec<_>>(), [true, false, false]);
+    }
 
     const GM: [u8; 8] = [0x00, 0x1D, 0xC1, 0xFF, 0xFE, 0x12, 0x34, 0x56];
     const GM_STR: &str = "00-1D-C1-FF-FE-12-34-56";
