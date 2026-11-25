@@ -136,6 +136,41 @@ The daemon provides a CORS-enabled HTTP server on port `8467`:
 | `/api/restart` | `POST` | Re-initializes virtual buses from clean state |
 | `/api/abandon` | `POST` | Emergency teardown: unloads all virtual modules and restores hardware default sink |
 
+### MXL domains and flows
+
+The TAP reads every MXL domain under the shm base (`/dev/shm/mxl`, or `WBS_SHM_BASE`), not only its own
+(`apps/mxl`, `scan_all_domains`).
+
+- **Nested domains.** The scan goes up to 4 folders deep. CBC containers mount `/dev/shm/mxl/domain_1` as
+  their MXL root, so a domain they pick lands in `domain_1/<domain>/` (for example
+  `/dev/shm/mxl/domain_1/domain-wbs-test-signals/`). A folder counts as a domain when it has a
+  `domain_def.json` or at least one flow folder with a `flow_def.json`.
+- **Same-label domains merge.** Domains are keyed by `label` from `domain_def.json` (else the folder name).
+  Two folders with the same label become one entry; their flows are merged, deduplicated by `flow_id`.
+- **Per flow**, the scan adds to `flow_def.json`: `domain_label`, `domain_id`, `folder`, `path`, `flow_id`
+  (`id`, else `flow_id`, else the folder name without `.mxl-flow`), `active` (true while the writer holds
+  the lock on `data`, the MXL convention), `started_at` (Unix seconds: folder birth time, else the
+  `flow_def.json` mtime) and `age_sec` (seconds since `started_at`).
+
+**Receivers and the test point take a flow from any domain.** A receiver of kind `mxl` names a flow by
+`flow_id`, `id` or folder name. The TAP's own engine flows are tried first; anything else is read in the
+CBC continuous-flow layout (`ExtFlow`, cached 5 s per flow id):
+
+| File | Offset | Type | Field |
+|---|---|---|---|
+| `data` (2064-byte header) | `0x30` | u32 | batch size hint (frames per read, clamped 1 to 48000) |
+| | `0x88` | u32 | channel count (used when `flow_def.json` has no `channel_count`) |
+| | `0x8C` | u32 | ring length in frames (0 = not receivable) |
+| | `0xC8` | u64 | absolute head index; ring position = head mod ring length |
+| `channels` | | float32 LE | planar ring: channel `c`, frame `i` at byte `(c * ring_length + i) * 4` |
+
+Sample rate comes from `flow_def.json` (`sample_rate`, a number or `{numerator}`; default 48000).
+All integers are little-endian.
+
+**API fields.** `GET /api/mxl` returns `domains`: the scan above, as
+`{label: {id, label, path, description?, flows: [...]}}`. `GET /api/status` carries the same object as
+`all_domains`; the patchbay lists those flows as MXL sources.
+
 ---
 
 ## 📦 Requirements
