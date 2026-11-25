@@ -321,6 +321,9 @@ pub fn mxl_sources(all_domains: &Value, own_domain: &str) -> Vec<Value> {
             continue;
         }
         for flw in arr(sget(dom, "flows")) {
+            if sget(flw, "home") == Some(&Value::Bool(false)) {
+                continue; // listed under its home domain (scan_all_domains marks one copy home)
+            }
             let s = |k: &str| match sget(flw, k) {
                 Some(Value::String(x)) => x.to_lowercase(),
                 _ => String::new(),

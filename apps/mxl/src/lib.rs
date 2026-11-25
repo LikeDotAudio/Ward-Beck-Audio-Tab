@@ -298,6 +298,77 @@ pub fn wbs_test_signals_domain_id() -> String {
     wbs_uuid(0, wbs_host_ip())
 }
 
+/// A flow published in several domains (the Tap cross-publishes its Test Signals into domain_1,
+/// CBC containers nest domains) is marked once as home. Each copy gets `home`; the home copy gets
+/// `also_in` (the other domain labels), the others `home_domain`. The home domain is, in order:
+/// 1. the domain whose UUID shares the flow UUID's namespace (first four groups: 25030044-0440-4415-8000-…
+///    flows belong to the 25030044-0440-4415-8000-000000000000 Ward-Beck Test Signals domain);
+/// 2. the one domain whose id / label a copy's own flow_def domain_id / grouphint names;
+/// 3. the least nested copy (ties: domain label order).
+fn mark_home_domains(domains: &mut Map<String, Value>) {
+    let s = |v: Option<&Value>| v.and_then(|x| x.as_str()).unwrap_or("").to_string();
+    // flow_id -> [(domain key, domain id, domain label, depth, def domain_id, grouphint)]
+    let mut copies: std::collections::HashMap<String, Vec<(String, String, String, u64, String, String)>> =
+        std::collections::HashMap::new();
+    for (key, dom) in domains.iter() {
+        for f in dom.get("flows").and_then(|v| v.as_array()).into_iter().flatten() {
+            let fid = match f.get("flow_id") {
+                Some(Value::String(x)) => x.clone(),
+                Some(other) => py_json_dumps(other, None),
+                None => continue,
+            };
+            copies.entry(fid).or_default().push((
+                key.clone(),
+                s(dom.get("id")),
+                s(dom.get("label")),
+                f.get("_depth").and_then(|v| v.as_u64()).unwrap_or(0),
+                s(f.get("_def_domain_id")),
+                s(f.get("grouphint")),
+            ));
+        }
+    }
+    let ns = |u: &str| (u.len() == 36 && u.as_bytes().get(23) == Some(&b'-')).then(|| u[..24].to_lowercase());
+    let mut home: std::collections::HashMap<String, (String, Vec<String>)> = std::collections::HashMap::new();
+    for (fid, c) in &copies {
+        let pick = ns(fid)
+            .and_then(|n| c.iter().find(|d| ns(&d.1).as_deref() == Some(n.as_str()) && d.1 != *fid))
+            .or_else(|| {
+                let named: Vec<_> = c
+                    .iter()
+                    .filter(|d| c.iter().any(|o| (!o.4.is_empty() && o.4 == d.1) || (!o.5.is_empty() && o.5 == d.2)))
+                    .collect();
+                (named.len() == 1).then(|| named[0])
+            })
+            .or_else(|| c.iter().min_by(|a, b| a.3.cmp(&b.3).then_with(|| a.0.cmp(&b.0))))
+            .map(|d| d.0.clone())
+            .unwrap_or_default();
+        let others = c.iter().filter(|d| d.0 != pick).map(|d| d.2.clone()).collect();
+        home.insert(fid.clone(), (pick, others));
+    }
+    for (key, dom) in domains.iter_mut() {
+        let Some(Value::Array(flows)) = dom.get_mut("flows") else { continue };
+        for f in flows.iter_mut() {
+            let Some(o) = f.as_object_mut() else { continue };
+            o.remove("_def_domain_id");
+            o.remove("_depth");
+            let fid = match o.get("flow_id") {
+                Some(Value::String(x)) => x.clone(),
+                Some(other) => py_json_dumps(other, None),
+                None => continue,
+            };
+            let Some((h, others)) = home.get(&fid) else { continue };
+            o.insert("home".into(), json!(h == key));
+            if h == key {
+                if !others.is_empty() {
+                    o.insert("also_in".into(), json!(others));
+                }
+            } else {
+                o.insert("home_domain".into(), json!(h));
+            }
+        }
+    }
+}
+
 /// True while some writer (this TAP included: flock is per open file) holds the lock on a
 /// flow's `data` file, which is how libmxl / mxl-info tell an Active flow.
 fn writer_holds_lock(data: &Path) -> bool {
@@ -959,14 +1030,19 @@ pub struct ExtFlow {
 }
 
 impl ExtFlow {
-    /// Ring position of the writer's head: the absolute head index (u64 at 0xC8) modulo the ring.
-    pub fn write_head(&self) -> Option<usize> {
+    /// The writer's absolute head index (u64 at 0xC8 of `data`); None once the flow is gone.
+    pub fn write_index(&self) -> Option<u64> {
         use std::io::{Seek, SeekFrom};
         let mut f = File::open(self.dir.join("data")).ok()?;
         f.seek(SeekFrom::Start(0xC8)).ok()?;
         let mut b = [0u8; 8];
         f.read_exact(&mut b).ok()?;
-        Some((u64::from_le_bytes(b) % self.buffer_length as u64) as usize)
+        Some(u64::from_le_bytes(b))
+    }
+
+    /// Ring position of the writer's head: the absolute head index modulo the ring.
+    pub fn write_head(&self) -> Option<usize> {
+        Some((self.write_index()? % self.buffer_length as u64) as usize)
     }
 
     /// `count` frames per channel from ring position `start` (wrapping), planar.
@@ -1594,6 +1670,10 @@ impl MxlEngine {
                     continue;
                 }
                 if let Some(Value::Object(mut fdef)) = read_json_file(&fdp) {
+                    // the domain the flow_def itself names, for mark_home_domains (dropped after)
+                    let own = fdef.get("domain_id").cloned().unwrap_or(Value::Null);
+                    fdef.insert("_def_domain_id".into(), own);
+                    fdef.insert("_depth".into(), json!(depth));
                     fdef.insert("domain_label".into(), meta["label"].clone());
                     fdef.insert("domain_id".into(), meta["id"].clone());
                     fdef.insert("folder".into(), json!(item));
@@ -1635,6 +1715,7 @@ impl MxlEngine {
             meta.insert("flows".into(), Value::Array(flows));
             domains.insert(key, Value::Object(meta));
         }
+        mark_home_domains(&mut domains);
         Value::Object(domains)
     }
 
@@ -1644,7 +1725,8 @@ impl MxlEngine {
         {
             let c = self.inner.ext_flows.lock().unwrap();
             if let Some((at, f)) = c.get(flow_id) {
-                if util::now_f64() - at < 5.0 {
+                // a flow whose writer removed it is looked up afresh (its ring may differ on return)
+                if util::now_f64() - at < 5.0 && f.dir.join("data").exists() {
                     return Some(f.clone());
                 }
             }
@@ -1674,6 +1756,7 @@ impl MxlEngine {
     }
 
     fn find_external(&self, flow_id: &str) -> Option<Value> {
+        let mut other_copy = None; // a copy outside the flow's home domain, if that is all there is
         if let Value::Object(domains) = self.scan_all_domains() {
             for dom in domains.values() {
                 if let Some(Value::Array(flows)) = dom.get("flows") {
@@ -1681,14 +1764,17 @@ impl MxlEngine {
                         let hit = ["flow_id", "id", "folder"]
                             .iter()
                             .any(|k| f.get(*k).and_then(|v| v.as_str()) == Some(flow_id));
-                        if hit {
+                        if hit && f.get("home") != Some(&Value::Bool(false)) {
                             return Some(f.clone());
+                        }
+                        if hit && other_copy.is_none() {
+                            other_copy = Some(f.clone());
                         }
                     }
                 }
             }
         }
-        None
+        other_copy
     }
 
     /// New audio of one flow since the caller's cursor, planar little-endian Float32.
@@ -1934,7 +2020,7 @@ impl MxlEngine {
 mod tests {
     use super::*;
 
-    fn scratch(name: &str) -> String {
+    pub(crate) fn scratch(name: &str) -> String {
         let root = std::env::var("WBS_TEST_SCRATCH").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
         let p = Path::new(&root).join(format!("mxl-unit-{}-{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&p);
@@ -2126,6 +2212,16 @@ mod tests {
         assert!(tsf.iter().any(|f| f["flow_id"] == "d72362ef-aec9-5b0f-a18d-91210871703d" && f["path"] == clip.as_str()));
         assert_eq!(tsf.iter().filter(|f| f["flow_id"] == uuid1.as_str()).count(), 1);
         assert!(doms.get("exercise-4").is_some());
+        // cross-published Test Signals: home is the Test Signals domain, the domain_1 copy points there
+        let home = tsf.iter().find(|f| f["flow_id"] == uuid1.as_str()).unwrap();
+        assert_eq!(home["home"], true);
+        assert_eq!(home["also_in"], json!(["exercise-4"]));
+        assert!(home.get("_depth").is_none() && home.get("_def_domain_id").is_none());
+        let ex = doms["exercise-4"]["flows"].as_array().unwrap();
+        let away = ex.iter().find(|f| f["flow_id"] == uuid1.as_str()).unwrap();
+        assert_eq!((away["home"].clone(), away["home_domain"].clone()), (json!(false), json!("Ward-Beck Test Signals")));
+        assert!(ex.iter().all(|f| f["home"] == false));
+        assert_eq!(e.find_external(uuid1).unwrap()["domain_label"], "Ward-Beck Test Signals");
         assert_eq!(doms["domain-wbs-dmf-01"]["flows"].as_array().unwrap().len(), e.flow_ids().len());
 
         // engine flow cursor maths
@@ -2190,6 +2286,45 @@ mod tests {
     }
 
     #[test]
+    fn a_flow_in_several_domains_has_one_home() {
+        let fl = |id: &str, def: &str, gh: &str, depth: u64| {
+            json!({"flow_id": id, "_def_domain_id": def, "grouphint": gh, "_depth": depth})
+        };
+        let mut d = Map::new();
+        d.insert("exercise-4".into(), json!({"id": "61ef9b5c-98c1-4f98-9def-1d61ee9a4fdb", "label": "exercise-4", "flows": [
+            fl("25030044-0440-4415-8000-000000000002", "61ef9b5c-98c1-4f98-9def-1d61ee9a4fdb", "", 0),
+            fl("aaaaaaaa-0000-0000-0000-000000000001", "61ef9b5c-98c1-4f98-9def-1d61ee9a4fdb", "", 0),
+            fl("named", "", "Studio B", 0),
+            fl("only-here", "", "", 0),
+        ]}));
+        d.insert("Studio B".into(), json!({"id": "b", "label": "Studio B", "flows": [
+            fl("aaaaaaaa-0000-0000-0000-000000000001", "b", "", 1),
+            fl("named", "", "Studio B", 0),
+        ]}));
+        d.insert("Ward-Beck Test Signals".into(), json!({"id": "25030044-0440-4415-8000-000000000000", "label": "Ward-Beck Test Signals", "flows": [
+            fl("25030044-0440-4415-8000-000000000002", "25030044-0440-4415-8000-000000000000", "", 0),
+        ]}));
+        mark_home_domains(&mut d);
+        let get = |dom: &str, id: &str| d[dom]["flows"].as_array().unwrap().iter().find(|f| f["flow_id"] == id).unwrap().clone();
+        // 1. UUID namespace
+        let w = "25030044-0440-4415-8000-000000000002";
+        assert_eq!(get("Ward-Beck Test Signals", w)["home"], true);
+        assert_eq!(get("Ward-Beck Test Signals", w)["also_in"], json!(["exercise-4"]));
+        assert_eq!(get("exercise-4", w)["home_domain"], "Ward-Beck Test Signals");
+        // 2. grouphint names one domain
+        assert_eq!(get("Studio B", "named")["home"], true);
+        assert_eq!(get("exercise-4", "named")["home"], false);
+        // 3. each copy names its own domain: the least nested wins
+        let a = "aaaaaaaa-0000-0000-0000-000000000001";
+        assert_eq!(get("exercise-4", a)["home"], true);
+        assert_eq!(get("Studio B", a)["home_domain"], "exercise-4");
+        // a flow in one domain is simply home, nothing else added
+        let o = get("exercise-4", "only-here");
+        assert_eq!(o["home"], true);
+        assert!(o.get("also_in").is_none() && o.get("_depth").is_none());
+    }
+
+    #[test]
     fn the_write_head_is_phase_locked_to_tai() {
         // 10 s ring at 48 kHz: TAI ...0.000 s is position 0, ...3.5 s is 3.5 × 48000.
         assert_eq!(clock_position(1_700_000_000_000_000_000, 48000, 480_000), 0);
@@ -2202,6 +2337,159 @@ mod tests {
         let now = clock_position(current_tai_ns(), 48000, 480_000);
         let off = (f.write_head() as i64 - now as i64).rem_euclid(480_000);
         assert!(off.min(480_000 - off) < 2400, "head {} vs clock {}", f.write_head(), now);
+    }
+
+    /// A CBC MXL continuous flow another writer owns: `<dom>/<id>.mxl-flow/{flow_def.json, data, channels}`.
+    /// `channels` is planar float32, ch × len + i holds ch·10000 + i (exact in f32).
+    /// The writer's absolute head index (u64 at 0xC8) is poked to `head_abs`.
+    pub(crate) fn fake_cbc_flow(dom: &Path, id: &str, flow_def: &str, hdr_channels: u32, len: u32, head_abs: u64) -> std::path::PathBuf {
+        let fd = dom.join(format!("{}.mxl-flow", id));
+        fs::create_dir_all(&fd).unwrap();
+        fs::write(fd.join("flow_def.json"), flow_def).unwrap();
+        let mut data = create_mxl_data_header(id, hdr_channels, 48000, 480, len);
+        assert_eq!(data.len(), 2064);
+        data[0xC8..0xD0].copy_from_slice(&head_abs.to_le_bytes());
+        fs::write(fd.join("data"), data).unwrap();
+        let mut ch = Vec::with_capacity(hdr_channels as usize * len as usize * 4);
+        for c in 0..hdr_channels {
+            for i in 0..len {
+                ch.extend_from_slice(&((c * 10000 + i) as f32).to_le_bytes());
+            }
+        }
+        fs::write(fd.join("channels"), ch).unwrap();
+        fd
+    }
+
+    const CBC_ID: &str = "d72362ef-aec9-5b0f-a18d-91210871703d";
+
+    #[test]
+    fn ext_flow_head_and_wrapping_planar_reads() {
+        let base = scratch("extflow");
+        let dom = Path::new(&base).join("cbc-dom");
+        fs::create_dir_all(&dom).unwrap();
+        fs::write(dom.join("domain_def.json"), "{\"id\":\"cbc-id\",\"label\":\"CBC\"}").unwrap();
+        let def = format!("{{\"id\":\"{}\",\"label\":\"clip-player-audio\",\"channel_count\":2,\"sample_rate\":{{\"numerator\":44100,\"denominator\":1}}}}", CBC_ID);
+        let fd = fake_cbc_flow(&dom, CBC_ID, &def, 2, 1000, 7 * 1000 + 250);
+        let e = MxlEngine::with_base("domain-wbs-dmf-01", &base);
+
+        let f = e.external_flow(CBC_ID).expect("external flow");
+        assert_eq!((f.channel_count, f.sample_rate, f.quantum, f.buffer_length), (2, 44100, 480, 1000));
+        assert_eq!((f.label.as_str(), f.domain_id.as_str()), ("clip-player-audio", "CBC"));
+        assert_eq!(f.dir, fd);
+        assert_eq!(f.write_head(), Some(250)); // absolute 7250 mod 1000
+
+        // plain read
+        let p = f.read_planar(10, 5);
+        assert_eq!(p, vec![vec![10.0, 11.0, 12.0, 13.0, 14.0], vec![10010.0, 10011.0, 10012.0, 10013.0, 10014.0]]);
+        // wrap: 990..1000 then 0..10
+        let p = f.read_planar(990, 20);
+        assert_eq!(p.len(), 2);
+        let want0: Vec<f32> = (990..1000).chain(0..10).map(|i| i as f32).collect();
+        let want1: Vec<f32> = want0.iter().map(|v| v + 10000.0).collect();
+        assert_eq!(p[0], want0);
+        assert_eq!(p[1], want1);
+        // start beyond the ring wraps too; count clamps to the ring
+        assert_eq!(f.read_planar(1990, 20)[0], want0);
+        let all = f.read_planar(500, 5000);
+        assert_eq!(all[0].len(), 1000);
+        assert_eq!((all[0][0], all[0][499], all[0][500], all[0][999]), (500.0, 999.0, 0.0, 499.0));
+
+        // the head moves: the next read sees it (no caching of the head itself)
+        let mut data = fs::read(fd.join("data")).unwrap();
+        data[0xC8..0xD0].copy_from_slice(&(8u64 * 1000 + 999).to_le_bytes());
+        fs::write(fd.join("data"), &data).unwrap();
+        assert_eq!(f.write_head(), Some(999));
+
+        // the descriptor is cached 5 s: still served after the folder goes away
+        fs::remove_dir_all(&fd).unwrap();
+        assert!(e.external_flow(CBC_ID).is_some());
+        let gone = e.external_flow(CBC_ID).unwrap();
+        assert_eq!(gone.write_head(), None);
+        assert!(gone.read_planar(0, 10).is_empty());
+        assert!(e.external_flow("no-such-flow").is_none());
+        e.stop();
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn ext_flow_header_fallbacks() {
+        let base = scratch("extflow-hdr");
+        let dom = Path::new(&base).join("cbc-dom");
+        fs::create_dir_all(&dom).unwrap();
+        // no channel_count / sample_rate in flow_def: channels from 0x88, 48 kHz default
+        fake_cbc_flow(&dom, "flow-a", "{\"id\":\"flow-a\",\"label\":\"A\"}", 3, 64, 64 + 5);
+        // buffer_length 0 is not a usable ring
+        fake_cbc_flow(&dom, "flow-z", "{\"id\":\"flow-z\"}", 2, 0, 0);
+        // a flow folder without a `data` header (our own ring.* layout) is not an external flow
+        let nod = dom.join("flow-n.mxl-flow");
+        fs::create_dir_all(&nod).unwrap();
+        fs::write(nod.join("flow_def.json"), "{\"id\":\"flow-n\"}").unwrap();
+        let e = MxlEngine::with_base("domain-wbs-dmf-01", &base);
+        let a = e.external_flow("flow-a").unwrap();
+        assert_eq!((a.channel_count, a.sample_rate, a.quantum, a.buffer_length), (3, 48000, 480, 64));
+        assert_eq!(a.write_head(), Some(5));
+        let p = a.read_planar(62, 4);
+        assert_eq!(p, vec![vec![62.0, 63.0, 0.0, 1.0], vec![10062.0, 10063.0, 10000.0, 10001.0], vec![20062.0, 20063.0, 20000.0, 20001.0]]);
+        assert_eq!(a.domain_id, "cbc-dom"); // no domain_def.json: the folder name labels it
+        assert!(e.external_flow("flow-z").is_none());
+        assert!(e.external_flow("flow-n").is_none());
+        // found by folder name too
+        assert!(e.external_flow("flow-a.mxl-flow").is_some());
+        e.stop();
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn scan_walks_nested_domains_and_merges_labels() {
+        let base = scratch("scan");
+        let b = Path::new(&base);
+        let def = |id: &str| format!("{{\"id\":\"{}\",\"label\":\"{}\"}}", id, id);
+        // nested 4 deep through plain folders (no domain_def.json, no flows)
+        let deep = b.join("p0/p1/p2/p3/deep-dom");
+        fake_cbc_flow(&deep, "deep-flow", &def("deep-flow"), 1, 16, 0);
+        // one more level is past the walk
+        let too_deep = b.join("q0/q1/q2/q3/q4/too-deep-dom");
+        fake_cbc_flow(&too_deep, "too-deep-flow", &def("too-deep-flow"), 1, 16, 0);
+        // two folders labelled the same domain: merged, the shared flow once
+        for (d, own) in [("cbc-a", "only-a"), ("x/cbc-b", "only-b")] {
+            let dp = b.join(d);
+            fs::create_dir_all(&dp).unwrap();
+            fs::write(dp.join("domain_def.json"), "{\"id\":\"cbc\",\"label\":\"CBC Shared\"}").unwrap();
+            fake_cbc_flow(&dp, "shared-flow", &def("shared-flow"), 1, 16, 0);
+            fake_cbc_flow(&dp, own, &def(own), 1, 16, 0);
+        }
+        // an empty domain still counts when it has a domain_def.json
+        fs::create_dir_all(b.join("empty-dom")).unwrap();
+        fs::write(b.join("empty-dom/domain_def.json"), "{\"label\":\"Empty\"}").unwrap();
+        fs::create_dir_all(b.join("just-a-folder/sub")).unwrap();
+
+        let e = MxlEngine::with_base("domain-wbs-dmf-01", &base);
+        let doms = e.scan_all_domains();
+        let o = doms.as_object().unwrap();
+        for plain in ["p0", "p1", "p2", "p3", "q0", "x", "just-a-folder", "sub", "too-deep-dom"] {
+            assert!(o.get(plain).is_none(), "{} should be skipped", plain);
+        }
+        assert!(o.get("Empty").is_some());
+        assert_eq!(o["Empty"]["flows"].as_array().unwrap().len(), 0);
+        let d = &o["deep-dom"];
+        assert_eq!(d["path"], deep.to_string_lossy().as_ref());
+        let df = &d["flows"][0];
+        assert_eq!((df["flow_id"].as_str(), df["folder"].as_str()), (Some("deep-flow"), Some("deep-flow.mxl-flow")));
+        assert_eq!(df["active"], false);
+        assert!(df["started_at"].as_f64().unwrap() > 1.6e9);
+        let age = df["age_sec"].as_f64().unwrap();
+        assert!((0.0..60.0).contains(&age), "age {}", age);
+        assert!(e.external_flow("deep-flow").is_some());
+        assert!(e.external_flow("too-deep-flow").is_none());
+
+        let shared = o["CBC Shared"]["flows"].as_array().unwrap();
+        let ids: Vec<&str> = shared.iter().filter_map(|f| f["flow_id"].as_str()).collect();
+        assert_eq!(ids.iter().filter(|i| **i == "shared-flow").count(), 1, "{:?}", ids);
+        assert!(ids.contains(&"only-a") && ids.contains(&"only-b"), "{:?}", ids);
+        assert_eq!(ids.len(), 3);
+        assert!(shared.iter().all(|f| f["domain_id"] == "cbc" && f["domain_label"] == "CBC Shared"));
+        e.stop();
+        let _ = fs::remove_dir_all(&base);
     }
 
 }
