@@ -2400,12 +2400,16 @@ mod tests {
         fs::write(fd.join("data"), &data).unwrap();
         assert_eq!(f.write_head(), Some(999));
 
-        // the descriptor is cached 5 s: still served after the folder goes away
+        // the descriptor is cached 5 s: a changed header is not re-read while the flow stays
+        let mut data = fs::read(fd.join("data")).unwrap();
+        data[0x8C..0x90].copy_from_slice(&500u32.to_le_bytes());
+        fs::write(fd.join("data"), &data).unwrap();
+        assert_eq!(e.external_flow(CBC_ID).unwrap().buffer_length, 1000);
+        // a flow its writer removed is looked up afresh (gone), and a held descriptor reads nothing
         fs::remove_dir_all(&fd).unwrap();
-        assert!(e.external_flow(CBC_ID).is_some());
-        let gone = e.external_flow(CBC_ID).unwrap();
-        assert_eq!(gone.write_head(), None);
-        assert!(gone.read_planar(0, 10).is_empty());
+        assert!(e.external_flow(CBC_ID).is_none());
+        assert_eq!(f.write_head(), None);
+        assert!(f.read_planar(0, 10).is_empty());
         assert!(e.external_flow("no-such-flow").is_none());
         e.stop();
         let _ = fs::remove_dir_all(&base);

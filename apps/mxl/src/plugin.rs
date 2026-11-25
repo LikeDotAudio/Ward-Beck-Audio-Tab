@@ -9,7 +9,7 @@ use wbs_plugin::services::{self, FlowInfo};
 use wbs_plugin::{json_reply, Plugin, Reply, RouteResult};
 use wbs_pyshim as py;
 
-use crate::engine;
+use crate::{engine, MxlEngine};
 
 struct Mxl;
 
@@ -146,6 +146,43 @@ impl Plugin for Mxl {
     }
 }
 
+fn flow_info_in(eng: &MxlEngine, flow_id: &str) -> Option<FlowInfo> {
+    if let Some(f) = eng.flow(flow_id) {
+        return Some(FlowInfo {
+            flow_id: f.flow_id.clone(),
+            label: f.label.clone(),
+            domain_id: f.domain_id.clone(),
+            channel_count: f.channel_count,
+            sample_rate: f.sample_rate,
+            quantum: f.quantum,
+            buffer_length: f.buffer_length,
+        });
+    }
+    eng.external_flow(flow_id).map(|f| FlowInfo {
+        flow_id: f.flow_id,
+        label: f.label,
+        domain_id: f.domain_id,
+        channel_count: f.channel_count,
+        sample_rate: f.sample_rate,
+        quantum: f.quantum,
+        buffer_length: f.buffer_length,
+    })
+}
+
+fn write_head_in(eng: &MxlEngine, flow_id: &str) -> Option<usize> {
+    match eng.flow(flow_id) {
+        Some(f) => Some(f.write_head()),
+        None => eng.external_flow(flow_id)?.write_head(),
+    }
+}
+
+fn read_planar_in(eng: &MxlEngine, flow_id: &str, start: usize, count: usize) -> Vec<Vec<f32>> {
+    match eng.flow(flow_id) {
+        Some(f) => f.read_planar(start, count),
+        None => eng.external_flow(flow_id).map(|f| f.read_planar(start, count)).unwrap_or_default(),
+    }
+}
+
 impl services::Mxl for Mxl {
     fn start(&self, source: &str) {
         engine().start(source)
@@ -178,40 +215,22 @@ impl services::Mxl for Mxl {
         engine().flow_ids()
     }
     // Engine flows first, then a flow in any other domain (e.g. a CBC file player's), so the
-    // receivers can take anything in /dev/shm/mxl.
+    // receivers can take anything under the MXL root (util::shm_base(): /dev/shm/mxl on Linux,
+    // <temp>/mxl on macOS / Windows).
     fn flow_info(&self, flow_id: &str) -> Option<FlowInfo> {
-        if let Some(f) = engine().flow(flow_id) {
-            return Some(FlowInfo {
-                flow_id: f.flow_id.clone(),
-                label: f.label.clone(),
-                domain_id: f.domain_id.clone(),
-                channel_count: f.channel_count,
-                sample_rate: f.sample_rate,
-                quantum: f.quantum,
-                buffer_length: f.buffer_length,
-            });
-        }
-        engine().external_flow(flow_id).map(|f| FlowInfo {
-            flow_id: f.flow_id,
-            label: f.label,
-            domain_id: f.domain_id,
-            channel_count: f.channel_count,
-            sample_rate: f.sample_rate,
-            quantum: f.quantum,
-            buffer_length: f.buffer_length,
-        })
+        flow_info_in(engine(), flow_id)
     }
     fn write_head(&self, flow_id: &str) -> Option<usize> {
+        write_head_in(engine(), flow_id)
+    }
+    fn write_index(&self, flow_id: &str) -> Option<u64> {
         match engine().flow(flow_id) {
-            Some(f) => Some(f.write_head()),
-            None => engine().external_flow(flow_id)?.write_head(),
+            Some(_) => None,
+            None => engine().external_flow(flow_id)?.write_index(),
         }
     }
     fn read_planar(&self, flow_id: &str, start: usize, count: usize) -> Vec<Vec<f32>> {
-        match engine().flow(flow_id) {
-            Some(f) => f.read_planar(start, count),
-            None => engine().external_flow(flow_id).map(|f| f.read_planar(start, count)).unwrap_or_default(),
-        }
+        read_planar_in(engine(), flow_id, start, count)
     }
     fn flow_pcm(&self, flow_id: &str, since: i64, max_frames: usize) -> Option<PcmChunk> {
         engine().get_flow_pcm(flow_id, since, max_frames)
@@ -226,4 +245,40 @@ impl services::Mxl for Mxl {
 pub fn plug() {
     wbs_plugin::register(&Mxl);
     services::provide_mxl(Box::new(Mxl));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::{fake_cbc_flow, scratch};
+    use std::path::Path;
+
+    #[test]
+    fn service_falls_back_to_external_flows() {
+        let base = scratch("plugin-ext");
+        let dom = Path::new(&base).join("domain_1");
+        fake_cbc_flow(&dom, "cbc-flow", "{\"id\":\"cbc-flow\",\"label\":\"Clip\",\"channel_count\":2}", 2, 100, 3 * 100 + 40);
+        let e = MxlEngine::with_base("domain-wbs-dmf-01", &base);
+
+        // engine flows win
+        let m = flow_info_in(&e, "wbs-flow-master-stereo").unwrap();
+        assert_eq!((m.channel_count, m.buffer_length, m.quantum), (2, 480000, 256));
+        assert_eq!(write_head_in(&e, "wbs-flow-master-stereo"), Some(0));
+        assert_eq!(read_planar_in(&e, "wbs-flow-master-stereo", 0, 4), vec![vec![0.0; 4]; 2]);
+
+        // then any other domain's flow
+        let x = flow_info_in(&e, "cbc-flow").unwrap();
+        assert_eq!((x.flow_id.as_str(), x.label.as_str(), x.domain_id.as_str()), ("cbc-flow", "Clip", "domain_1"));
+        assert_eq!((x.channel_count, x.sample_rate, x.quantum, x.buffer_length), (2, 48000, 480, 100));
+        assert_eq!(write_head_in(&e, "cbc-flow"), Some(40));
+        let p = read_planar_in(&e, "cbc-flow", 98, 4);
+        assert_eq!(p, vec![vec![98.0, 99.0, 0.0, 1.0], vec![10098.0, 10099.0, 10000.0, 10001.0]]);
+
+        // unknown flows: nothing
+        assert!(flow_info_in(&e, "nope").is_none());
+        assert_eq!(write_head_in(&e, "nope"), None);
+        assert!(read_planar_in(&e, "nope", 0, 4).is_empty());
+        e.stop();
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
