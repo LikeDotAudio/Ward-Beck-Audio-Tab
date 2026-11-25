@@ -564,7 +564,7 @@ impl TestPoint {
         let mxl = wbs_plugin::services::mxl();
         let flow = mxl
             .flow_info(&self.reference)
-            .ok_or_else(|| PyErr::lookup(format!("MXL flow {} is not in this domain", self.reference)))?;
+            .ok_or_else(|| PyErr::lookup(format!("MXL flow {} is not in /dev/shm/mxl", self.reference)))?;
         let id = flow.flow_id.clone();
         let channels = flow.channel_count;
         {

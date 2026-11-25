@@ -128,6 +128,17 @@ fn join(a: &str, b: &str) -> String {
     Path::new(a).join(b).to_string_lossy().into_owned()
 }
 
+/// Unix seconds the flow appeared: folder birth time where the filesystem keeps one (tmpfs does),
+/// else flow_def.json's mtime (written once, at create).
+fn flow_started_at(flow_dir: &Path) -> Option<f64> {
+    let secs = |t: std::time::SystemTime| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs_f64());
+    fs::metadata(flow_dir)
+        .ok()
+        .and_then(|m| m.created().ok())
+        .and_then(secs)
+        .or_else(|| fs::metadata(flow_dir.join("flow_def.json")).ok().and_then(|m| m.modified().ok()).and_then(secs))
+}
+
 fn list_dir(p: &Path) -> Vec<String> {
     match fs::read_dir(p) {
         Ok(rd) => rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect(),
@@ -934,6 +945,56 @@ impl MxlFlow {
 // MxlEngine
 // ---------------------------------------------------------------------------
 
+/// A flow another writer owns (CBC MXL continuous layout): `data` header + planar `channels` ring.
+#[derive(Clone, Debug)]
+pub struct ExtFlow {
+    pub flow_id: String,
+    pub label: String,
+    pub domain_id: String,
+    pub channel_count: usize,
+    pub sample_rate: u32,
+    pub quantum: usize,
+    pub buffer_length: usize,
+    pub dir: std::path::PathBuf,
+}
+
+impl ExtFlow {
+    /// Ring position of the writer's head: the absolute head index (u64 at 0xC8) modulo the ring.
+    pub fn write_head(&self) -> Option<usize> {
+        use std::io::{Seek, SeekFrom};
+        let mut f = File::open(self.dir.join("data")).ok()?;
+        f.seek(SeekFrom::Start(0xC8)).ok()?;
+        let mut b = [0u8; 8];
+        f.read_exact(&mut b).ok()?;
+        Some((u64::from_le_bytes(b) % self.buffer_length as u64) as usize)
+    }
+
+    /// `count` frames per channel from ring position `start` (wrapping), planar.
+    pub fn read_planar(&self, start: usize, count: usize) -> Vec<Vec<f32>> {
+        use std::io::{Seek, SeekFrom};
+        let l = self.buffer_length;
+        let Ok(mut f) = File::open(self.dir.join("channels")) else { return Vec::new() };
+        (0..self.channel_count)
+            .map(|ch| {
+                let mut out = Vec::with_capacity(count);
+                let (mut pos, mut left) = (start % l, count.min(l));
+                while left > 0 {
+                    let take = left.min(l - pos);
+                    let mut raw = vec![0u8; take * 4];
+                    let ok = f.seek(SeekFrom::Start(((ch * l + pos) * 4) as u64)).is_ok() && f.read_exact(&mut raw).is_ok();
+                    if !ok {
+                        raw.iter_mut().for_each(|b| *b = 0);
+                    }
+                    out.extend(bytes_to_f32(&raw));
+                    left -= take;
+                    pos = 0;
+                }
+                out
+            })
+            .collect()
+    }
+}
+
 struct ExtEntry {
     at: f64,
     label: Value,
@@ -957,6 +1018,7 @@ struct Inner {
     active_source: Mutex<String>,
     lock_fds: Mutex<Vec<File>>,
     ext_cache: Mutex<HashMap<String, ExtEntry>>,
+    ext_flows: Mutex<HashMap<String, (f64, ExtFlow)>>,
     multi: multichannel::Generators,
 }
 
@@ -1184,6 +1246,7 @@ impl MxlEngine {
                 active_source: Mutex::new(DEFAULT_SOURCE.to_string()),
                 lock_fds: Mutex::new(Vec::new()),
                 ext_cache: Mutex::new(HashMap::new()),
+                ext_flows: Mutex::new(HashMap::new()),
                 multi: multichannel::Generators::new(),
             }),
         };
@@ -1489,10 +1552,22 @@ impl MxlEngine {
         if !is_dir(base) {
             return Value::Object(domains);
         }
-        for entry in list_dir(base) {
-            let dom_path = base.join(&entry);
-            if !is_dir(&dom_path) {
+        // Walk every domain under base, nested ones too (base/<domain>/<domain>/…, up to 4 deep): CBC containers
+        // mount domain_1 as their MXL root, so a domain they pick (e.g. Ward-Beck Test Signals) lands
+        // in /dev/shm/mxl/domain_1/domain-wbs-test-signals/. Same-label domains merge (flows deduped by id).
+        let mut queue: Vec<(std::path::PathBuf, String, usize)> =
+            list_dir(base).into_iter().map(|e| (base.join(&e), e, 0)).collect();
+        while let Some((dom_path, entry, depth)) = queue.pop() {
+            if !is_dir(&dom_path) || entry.ends_with(".mxl-flow") {
                 continue;
+            }
+            if depth < 4 {
+                for sub in list_dir(&dom_path) {
+                    let sp = dom_path.join(&sub);
+                    if !sub.ends_with(".mxl-flow") && is_dir(&sp) {
+                        queue.insert(0, (sp, sub, depth + 1));
+                    }
+                }
             }
             let dom_path_s = dom_path.to_string_lossy().into_owned();
             let mut meta = Map::new();
@@ -1525,6 +1600,11 @@ impl MxlEngine {
                     fdef.insert("path".into(), json!(item_path.to_string_lossy()));
                     // MXL convention: a flow is Active while its writer holds the lock on `data`
                     fdef.insert("active".into(), json!(writer_holds_lock(&item_path.join("data"))));
+                    // when the writer created the flow (folder birth time, else flow_def.json mtime) and its age
+                    if let Some(t) = flow_started_at(&item_path) {
+                        fdef.insert("started_at".into(), f64v(py_round(t, 3)));
+                        fdef.insert("age_sec".into(), f64v(py_round((util::now_f64() - t).max(0.0), 1)));
+                    }
                     let fid = [fdef.get("id"), fdef.get("flow_id")]
                         .into_iter()
                         .flatten()
@@ -1535,14 +1615,62 @@ impl MxlEngine {
                     flows.push(Value::Object(fdef));
                 }
             }
-            meta.insert("flows".into(), Value::Array(flows));
+            if flows.is_empty() && !is_file(&ddp) {
+                continue; // a plain folder, not a domain
+            }
             let key = match &meta["label"] {
                 Value::String(s) => s.clone(),
                 other => py_json_dumps(other, None),
             };
+            if let Some(Value::Object(existing)) = domains.get_mut(&key) {
+                if let Some(Value::Array(have)) = existing.get_mut("flows") {
+                    for f in flows {
+                        if !have.iter().any(|h| h.get("flow_id") == f.get("flow_id")) {
+                            have.push(f);
+                        }
+                    }
+                }
+                continue;
+            }
+            meta.insert("flows".into(), Value::Array(flows));
             domains.insert(key, Value::Object(meta));
         }
         Value::Object(domains)
+    }
+
+    /// A flow in any other domain (CBC MXL continuous layout), for the receivers: ring length and
+    /// batch size from its `data` header, the rest from flow_def.json. Cached 5 s per flow id.
+    pub fn external_flow(&self, flow_id: &str) -> Option<ExtFlow> {
+        {
+            let c = self.inner.ext_flows.lock().unwrap();
+            if let Some((at, f)) = c.get(flow_id) {
+                if util::now_f64() - at < 5.0 {
+                    return Some(f.clone());
+                }
+            }
+        }
+        let t = self.find_external(flow_id)?;
+        let dir = std::path::PathBuf::from(t.get("path")?.as_str()?);
+        let mut hdr = vec![0u8; 0x90];
+        File::open(dir.join("data")).ok()?.read_exact(&mut hdr).ok()?;
+        let u32_at = |o: usize| u32::from_le_bytes([hdr[o], hdr[o + 1], hdr[o + 2], hdr[o + 3]]) as usize;
+        let num = |v: Option<&Value>| v.and_then(|x| x.as_u64().or_else(|| x.get("numerator").and_then(|n| n.as_u64())));
+        let channel_count = num(t.get("channel_count")).map(|n| n as usize).unwrap_or_else(|| u32_at(0x88)).max(1);
+        let f = ExtFlow {
+            flow_id: flow_id.to_string(),
+            label: t.get("label").and_then(|v| v.as_str()).unwrap_or(flow_id).to_string(),
+            domain_id: t.get("domain_label").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            channel_count,
+            sample_rate: num(t.get("sample_rate")).unwrap_or(48000) as u32,
+            quantum: u32_at(0x30).clamp(1, 48000),
+            buffer_length: u32_at(0x8C),
+            dir,
+        };
+        if f.buffer_length == 0 {
+            return None;
+        }
+        self.inner.ext_flows.lock().unwrap().insert(flow_id.to_string(), (util::now_f64(), f.clone()));
+        Some(f)
     }
 
     fn find_external(&self, flow_id: &str) -> Option<Value> {
@@ -1986,8 +2114,17 @@ mod tests {
         let cbc: Value = serde_json::from_str(&fs::read_to_string(format!("{}/domain_1/{}.mxl-flow/flow_def.json", base, uuid1)).unwrap()).unwrap();
         assert_eq!(cbc["domain_id"], "x-id");
 
+        // a CBC container (MXL root = domain_1) writing into the nested test-signals domain
+        let clip = format!("{}/domain_1/{}/d72362ef-aec9-5b0f-a18d-91210871703d.mxl-flow", base, WBS_TEST_SIGNALS_DOMAIN_DIR);
+        fs::create_dir_all(&clip).unwrap();
+        fs::write(format!("{}/flow_def.json", clip),
+                  "{\"id\":\"d72362ef-aec9-5b0f-a18d-91210871703d\",\"label\":\"clip-player-audio\",\"format\":\"urn:x-nmos:format:audio\",\"channel_count\":1}").unwrap();
+
         let doms = e.scan_all_domains();
         assert!(doms.get("Ward-Beck Test Signals").is_some());
+        let tsf = doms["Ward-Beck Test Signals"]["flows"].as_array().unwrap();
+        assert!(tsf.iter().any(|f| f["flow_id"] == "d72362ef-aec9-5b0f-a18d-91210871703d" && f["path"] == clip.as_str()));
+        assert_eq!(tsf.iter().filter(|f| f["flow_id"] == uuid1.as_str()).count(), 1);
         assert!(doms.get("exercise-4").is_some());
         assert_eq!(doms["domain-wbs-dmf-01"]["flows"].as_array().unwrap().len(), e.flow_ids().len());
 

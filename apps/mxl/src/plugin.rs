@@ -177,11 +177,24 @@ impl services::Mxl for Mxl {
     fn flow_ids(&self) -> Vec<String> {
         engine().flow_ids()
     }
+    // Engine flows first, then a flow in any other domain (e.g. a CBC file player's), so the
+    // receivers can take anything in /dev/shm/mxl.
     fn flow_info(&self, flow_id: &str) -> Option<FlowInfo> {
-        engine().flow(flow_id).map(|f| FlowInfo {
-            flow_id: f.flow_id.clone(),
-            label: f.label.clone(),
-            domain_id: f.domain_id.clone(),
+        if let Some(f) = engine().flow(flow_id) {
+            return Some(FlowInfo {
+                flow_id: f.flow_id.clone(),
+                label: f.label.clone(),
+                domain_id: f.domain_id.clone(),
+                channel_count: f.channel_count,
+                sample_rate: f.sample_rate,
+                quantum: f.quantum,
+                buffer_length: f.buffer_length,
+            });
+        }
+        engine().external_flow(flow_id).map(|f| FlowInfo {
+            flow_id: f.flow_id,
+            label: f.label,
+            domain_id: f.domain_id,
             channel_count: f.channel_count,
             sample_rate: f.sample_rate,
             quantum: f.quantum,
@@ -189,10 +202,16 @@ impl services::Mxl for Mxl {
         })
     }
     fn write_head(&self, flow_id: &str) -> Option<usize> {
-        engine().flow(flow_id).map(|f| f.write_head())
+        match engine().flow(flow_id) {
+            Some(f) => Some(f.write_head()),
+            None => engine().external_flow(flow_id)?.write_head(),
+        }
     }
     fn read_planar(&self, flow_id: &str, start: usize, count: usize) -> Vec<Vec<f32>> {
-        engine().flow(flow_id).map(|f| f.read_planar(start, count)).unwrap_or_default()
+        match engine().flow(flow_id) {
+            Some(f) => f.read_planar(start, count),
+            None => engine().external_flow(flow_id).map(|f| f.read_planar(start, count)).unwrap_or_default(),
+        }
     }
     fn flow_pcm(&self, flow_id: &str, since: i64, max_frames: usize) -> Option<PcmChunk> {
         engine().get_flow_pcm(flow_id, since, max_frames)
