@@ -71,7 +71,7 @@ use wbs_generators::spitter::{SpitterFile, SpitterParams, SpitterSynth};
 
 fn default_bb_config() -> Map<String, Value> {
     let mut m = Map::new();
-    m.insert("pattern".into(), json!("prbs"));
+    m.insert("pattern".into(), json!("sweep"));
     m.insert("pro_mode".into(), json!(true));
     m.insert("audio_data".into(), json!(true));
     m.insert("sample_rate".into(), json!(48000));
@@ -1296,7 +1296,7 @@ fn spitter_params(cfg: &Map<String, Value>) -> SpitterParams {
     let s = |k: &str, d: &str| cfg.get(k).and_then(|v| v.as_str()).unwrap_or(d).to_string();
     let b = |k: &str| cfg.get(k).map(py::truthy).unwrap_or(false);
     let ch_b = s("ch_b", "on");
-    let pattern = s("pattern", "prbs");
+    let pattern = s("pattern", "sweep");
     SpitterParams {
         file: if pattern == "file" { bb_file().as_ref().map(|(_, f)| f.clone()) } else { None },
         pattern,

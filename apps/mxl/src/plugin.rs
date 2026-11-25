@@ -4,7 +4,7 @@
 
 use serde_json::{json, Map, Value};
 use wbs_common::PcmChunk;
-use wbs_plugin::reply::{qs_int, seg};
+use wbs_plugin::reply::{json_error, loads_obj, qs_int, seg};
 use wbs_plugin::services::{self, FlowInfo};
 use wbs_plugin::{json_reply, Plugin, Reply, RouteResult};
 use wbs_pyshim as py;
@@ -96,6 +96,7 @@ impl Plugin for Mxl {
         Some(match p {
             "/api/mxl" => Ok(json_reply(&engine().get_telemetry())),
             "/api/mxl/rings" => rings(query),
+            "/api/bitspitter8" => Ok(json_reply(&crate::spitter8::status())),
             p if p == "/api/mxl/waveform" || (p.starts_with("/api/mxl/flow/") && p.contains("/waveform")) => {
                 let flow_id = match seg(p, 4) {
                     Some(s) if s != "waveform" => s.to_string(),
@@ -123,6 +124,17 @@ impl Plugin for Mxl {
             p if p.starts_with("/api/mxl/flow/") && p.contains("/slice") => slice(p, query),
             _ => return None,
         })
+    }
+
+    fn post(&self, path: &str, body: &str) -> Option<RouteResult> {
+        match path {
+            // ABS-1 ×4 Bit Spitter (8 ch): {active, pairs: [{pattern, level_db, tone_hz, ch_b, fault} ×4]}
+            "/api/bitspitter8" => Some(loads_obj(body).map(|m| match crate::spitter8::post(&m) {
+                Ok(v) => json_reply(&v),
+                Err(e) => json_error(400, &e),
+            })),
+            _ => None,
+        }
     }
 }
 

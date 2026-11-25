@@ -20,6 +20,7 @@
 //! Nothing is synthesized: a point that cannot be reached reports why.
 
 // Plugged into the host: routes, services and start-up (plugin.rs).
+pub mod ams81;
 pub mod plugin;
 pub use plugin::plug;
 
@@ -46,13 +47,21 @@ pub const FLOW_ID: &str = "wbs-test-point";
 pub struct Slot {
     pub name: &'static str,
     pub flow_id: &'static str,
+    /// the AMS-81 stereo fold-down of this receiver ("" = none: the test point)
+    pub fold_flow_id: &'static str,
     pub title: &'static str,
     pub kind: &'static str,
 }
 pub const SLOTS: [Slot; 3] = [
-    Slot { name: "testpoint", flow_id: FLOW_ID, title: "TEST POINT", kind: "testpoint" },
-    Slot { name: "network", flow_id: "wbs-network-rx", title: "NETWORK RX", kind: "receiver" },
-    Slot { name: "moip", flow_id: "wbs-moip-rx", title: "MOIP RX", kind: "receiver" },
+    Slot { name: "testpoint", flow_id: FLOW_ID, fold_flow_id: "", title: "TEST POINT", kind: "testpoint" },
+    Slot {
+        name: "network",
+        flow_id: "wbs-network-rx",
+        fold_flow_id: "wbs-network-ams81",
+        title: "NETWORK RX",
+        kind: "receiver",
+    },
+    Slot { name: "moip", flow_id: "wbs-moip-rx", fold_flow_id: "wbs-moip-ams81", title: "MOIP RX", kind: "receiver" },
 ];
 pub const TEST_POINT: usize = 0;
 
@@ -62,6 +71,11 @@ pub fn slot_named(name: &str) -> Option<usize> {
 
 pub fn slot_of_flow(flow_id: &str) -> Option<usize> {
     SLOTS.iter().position(|s| s.flow_id == flow_id)
+}
+
+/// The receiver whose AMS-81 fold-down is `flow_id`.
+pub fn slot_of_fold(flow_id: &str) -> Option<usize> {
+    SLOTS.iter().position(|s| !s.fold_flow_id.is_empty() && s.fold_flow_id == flow_id)
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -332,10 +346,31 @@ struct TpState {
     hint: Option<String>,
     fix: Value, // {title, why, options:[{label, note, command}]}: only the user can run it
     ring: Option<TapRing>,
+    fold: Option<TapRing>, // receivers: the AMS-81 stereo fold-down of `ring`
     sample_rate: u32,
     channels: usize,
     packet_frames: usize,
     lost: u64,
+}
+
+impl TpState {
+    /// One packet into the ring; a receiver also folds it (AMS-81) into its stereo `fold`
+    /// ring, kept at the ring's packet size and rate.
+    fn write_planar(&mut self, slot: usize, planar: &[Vec<f32>]) {
+        let Some(r) = self.ring.as_mut() else { return };
+        r.write(planar);
+        if SLOTS[slot].fold_flow_id.is_empty() {
+            return;
+        }
+        let (pf, sr) = (r.packet_frames, r.sample_rate);
+        if !self.fold.as_ref().is_some_and(|f| f.packet_frames == pf && f.sample_rate == sr) {
+            self.fold = Some(TapRing::new(2, pf, sr, RING_SECONDS));
+        }
+        let lr = ams81::settings()[slot].fold(planar);
+        if let Some(f) = self.fold.as_mut() {
+            f.write(&lr);
+        }
+    }
 }
 
 struct TestPoint {
@@ -367,6 +402,7 @@ impl TestPoint {
                 hint: None,
                 fix: Value::Null,
                 ring: None,
+                fold: None,
                 sample_rate: 48000,
                 channels: 2,
                 packet_frames: 0,
@@ -502,9 +538,7 @@ impl TestPoint {
                 planar[i % n].push(f32::from_le_bytes([b[0], b[1], b[2], b[3]]));
             }
             let mut s = lock(&self.st);
-            if let Some(r) = s.ring.as_mut() {
-                r.write(&planar);
-            }
+            s.write_planar(self.slot, &planar);
         }
         *lock(&self.child_pid) = None;
         let _ = child.kill();
@@ -547,9 +581,7 @@ impl TestPoint {
             let start = (w + l - avail % l) % l;
             let planar = mxl.read_planar(&id, start, avail);
             let mut s = lock(&self.st);
-            if let Some(r) = s.ring.as_mut() {
-                r.write(&planar);
-            }
+            s.write_planar(self.slot, &planar);
             drop(s);
             cursor = w;
         }
@@ -708,9 +740,7 @@ impl TestPoint {
                 st.ring = Some(TapRing::new(n, frames, sample_rate, RING_SECONDS));
             }
             sized = true;
-            if let Some(r) = st.ring.as_mut() {
-                r.write(&planar);
-            }
+            st.write_planar(self.slot, &planar);
             st.status = "running".into();
             st.hint = None;
             st.fix = Value::Null;
@@ -762,8 +792,18 @@ impl TestPoint {
     }
 
     fn ring_snapshot(&self, bins: usize) -> Option<Value> {
+        self.snapshot_of(bins, false)
+    }
+
+    /// The AMS-81 fold-down's ring, as its own stereo flow.
+    fn fold_snapshot(&self, bins: usize) -> Option<Value> {
+        self.snapshot_of(bins, true)
+    }
+
+    fn snapshot_of(&self, bins: usize, fold: bool) -> Option<Value> {
+        let select = if fold { ams81::settings().get(self.slot)?.select_name() } else { String::new() };
         let s = lock(&self.st);
-        let r = s.ring.as_ref()?;
+        let r = if fold { s.fold.as_ref()? } else { s.ring.as_ref()? };
         let chans = r.snapshot(bins);
         let head = r.head as i64;
         let mut d = match self.info_locked(&s) {
@@ -771,8 +811,14 @@ impl TestPoint {
             _ => Map::new(),
         };
         let slot = &SLOTS[self.slot];
-        d.insert("flow_id".into(), json!(slot.flow_id));
-        d.insert("label".into(), json!(format!("{} \u{b7} {}", slot.title, self.label)));
+        if fold {
+            d.insert("channel_count".into(), json!(r.channels));
+            d.insert("flow_id".into(), json!(slot.fold_flow_id));
+            d.insert("label".into(), json!(format!("{} \u{b7} AMS-81 {} \u{b7} {}", slot.title, select, self.label)));
+        } else {
+            d.insert("flow_id".into(), json!(slot.flow_id));
+            d.insert("label".into(), json!(format!("{} \u{b7} {}", slot.title, self.label)));
+        }
         d.insert("kind".into(), json!(slot.kind));
         d.insert("slot".into(), json!(slot.name));
         d.insert("buffer_length".into(), json!(r.length));
@@ -1041,6 +1087,10 @@ pub fn status_in(slot: usize) -> Value {
     let mut m = Map::new();
     m.insert("active".into(), json!(tp.is_some()));
     m.insert("flow_id".into(), json!(SLOTS[slot].flow_id));
+    if !SLOTS[slot].fold_flow_id.is_empty() {
+        m.insert("fold_flow_id".into(), json!(SLOTS[slot].fold_flow_id));
+        m.insert("ams81".into(), json!(ams81::settings()[slot].select_name()));
+    }
     m.insert("point".into(), tp.map(|t| t.info()).unwrap_or(Value::Null));
     Value::Object(m)
 }
@@ -1053,6 +1103,31 @@ pub fn pcm_since_in(slot: usize, since: i64, max_frames: usize) -> Option<PcmChu
     let tp = current_in(slot)?;
     let s = lock(&tp.st);
     s.ring.as_ref()?.pcm_since(since, max_frames)
+}
+
+pub fn fold_snapshot_in(slot: usize, bins: usize) -> Option<Value> {
+    current_in(slot)?.fold_snapshot(bins)
+}
+
+/// New audio of a receiver's AMS-81 fold-down (same cursor semantics as pcm_since_in).
+pub fn fold_pcm_since_in(slot: usize, since: i64, max_frames: usize) -> Option<PcmChunk> {
+    let tp = current_in(slot)?;
+    let s = lock(&tp.st);
+    s.fold.as_ref()?.pcm_since(since, max_frames)
+}
+
+/// Every receiver's fold-down: {network: {select, presets, flow_id}, moip: {...}}.
+pub fn ams81_status() -> Value {
+    let a = ams81::settings();
+    let mut m = Map::new();
+    for (i, s) in SLOTS.iter().enumerate().filter(|(_, s)| !s.fold_flow_id.is_empty()) {
+        let mut v = a[i].to_json();
+        if let Some(o) = v.as_object_mut() {
+            o.insert("flow_id".into(), json!(s.fold_flow_id));
+        }
+        m.insert(s.name.into(), v);
+    }
+    Value::Object(m)
 }
 
 /// The router's dedicated receivers: {network: {active, flow_id, point}, moip: {...}}.
@@ -1281,6 +1356,58 @@ mod tests {
         let r = receivers_status();
         assert_eq!(r["moip"]["flow_id"], "wbs-moip-rx");
         assert_eq!(r["network"]["active"], false);
+    }
+
+    #[test]
+    fn receivers_fold_to_ams81() {
+        assert_eq!(slot_of_fold("wbs-network-ams81"), Some(1));
+        assert_eq!(slot_of_fold("wbs-moip-ams81"), Some(2));
+        assert_eq!(slot_of_fold(""), None);
+        assert_eq!(slot_of_flow("wbs-moip-ams81"), None);
+        let eight: Vec<Vec<f32>> = (0..8).map(|c| vec![(c + 1) as f32 / 10.0; 48]).collect();
+        // the test point keeps no fold-down
+        let t0 = TestPoint::new(TEST_POINT, "pw", "1", "");
+        {
+            let mut s = lock(&t0.st);
+            s.ring = Some(TapRing::new(8, 48, 48000, 0.0));
+            s.write_planar(TEST_POINT, &eight);
+            assert!(s.fold.is_none() && s.ring.as_ref().unwrap().packets == 1);
+        }
+        // a receiver folds each packet into a stereo ring at the same packet size / rate
+        let t = TestPoint::new(1, "aoip", "studio", "");
+        let want = ams81::settings()[1].fold(&eight);
+        {
+            let mut s = lock(&t.st);
+            s.channels = 8;
+            s.write_planar(1, &eight); // no ring yet: nothing
+            assert!(s.fold.is_none());
+            s.ring = Some(TapRing::new(8, 48, 48000, RING_SECONDS));
+            s.write_planar(1, &eight);
+            let f = s.fold.as_ref().unwrap();
+            assert_eq!((f.channels, f.packet_frames, f.sample_rate, f.packets), (2, 48, 48000, 1));
+            assert_eq!(f.length, s.ring.as_ref().unwrap().length);
+            assert_eq!((f.data[0][0], f.data[1][47]), (want[0][0], want[1][47]));
+            // a new packet size rebuilds the fold ring
+            s.ring = Some(TapRing::new(8, 96, 48000, RING_SECONDS));
+            s.write_planar(1, &eight);
+            assert_eq!((s.fold.as_ref().unwrap().packet_frames, s.fold.as_ref().unwrap().packets), (96, 1));
+        }
+        let d = t.fold_snapshot(60).unwrap();
+        assert_eq!(d["flow_id"], "wbs-network-ams81");
+        assert_eq!(d["channel_count"], 2);
+        assert_eq!(d["channels"].as_array().unwrap().len(), 2);
+        let sel = ams81::settings()[1].select_name();
+        assert_eq!(d["label"], format!("NETWORK RX \u{b7} AMS-81 {sel} \u{b7} studio"));
+        assert_eq!(t.ring_snapshot(60).unwrap()["channel_count"], 8);
+        // status and the fold-down API
+        let r = receivers_status();
+        assert_eq!(r["network"]["fold_flow_id"], "wbs-network-ams81");
+        assert_eq!(r["moip"]["ams81"], json!(ams81::settings()[2].select_name()));
+        assert!(status().get("fold_flow_id").is_none());
+        let a = ams81_status();
+        assert_eq!(a["moip"]["flow_id"], "wbs-moip-ams81");
+        assert_eq!(a["network"]["presets"]["D"]["R"].as_array().unwrap().len(), 8);
+        assert!(a.get("testpoint").is_none());
     }
 
     #[test]

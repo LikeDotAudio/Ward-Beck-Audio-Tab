@@ -47,7 +47,7 @@ fn self_test() -> ! {
         (html.contains("WARD BECK TAP") || html.contains("Ward-Beck"), "HTML header missing"),
         (html.contains("ward-beck.ca") || html.contains("xtm.wbsps.ca"), "Live URL missing"),
         (html.contains("api/stream/meters"), "Telemetry SSE endpoint missing"),
-        (tap::bitbuddy_config().get("pattern").and_then(|v| v.as_str()) == Some("prbs"), "Bit Buddy config invalid"),
+        (tap::bitbuddy_config().get("pattern").and_then(|v| v.as_str()) == Some("sweep"), "Bit Buddy config invalid"),
         (http::CORS_HEADERS.len() == 4, "CORS headers missing"),
     ];
     for (ok, msg) in checks {

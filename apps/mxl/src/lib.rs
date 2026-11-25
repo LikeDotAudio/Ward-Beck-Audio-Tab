@@ -14,6 +14,10 @@
 // Plugged into the host: routes, services and start-up (plugin.rs).
 pub mod plugin;
 pub use plugin::plug;
+// The 8-channel ID and diagonal generator flows.
+mod multichannel;
+// ABS-1 ×4 Bit Spitter: its own 8-channel flow (GET / POST /api/bitspitter8).
+pub mod spitter8;
 
 use memmap2::{Mmap, MmapMut};
 use serde_json::{json, Map, Value};
@@ -875,6 +879,7 @@ impl MxlFlow {
                 "rms_db": f64v(to_db(rms[c])),
             }));
         }
+        ch.extend(self.extra_channel_snapshots(step, &peak, &rms));
         json!({
             "flow_id": self.flow_id,
             "label": self.label,
@@ -952,6 +957,7 @@ struct Inner {
     active_source: Mutex<String>,
     lock_fds: Mutex<Vec<File>>,
     ext_cache: Mutex<HashMap<String, ExtEntry>>,
+    multi: multichannel::Generators,
 }
 
 pub struct MxlEngine {
@@ -1121,7 +1127,7 @@ impl MxlEngine {
         let mk = |id: &str, label: &str, kind: &str| {
             Arc::new(MxlFlow::new(shm_base, domain_id, id, label, 48000, 2, 480000, 256, kind))
         };
-        let flows = vec![
+        let mut flows = vec![
             mk("wbs-flow-master-stereo", "Ward-Beck Master Bus (Float32 Stereo)", "program"),
             mk("wbs-flow-ref-tone", "Ward-Beck POD-33 Precision Tone Flow (Float32 Stereo)", "generator"),
             mk(
@@ -1130,6 +1136,7 @@ impl MxlEngine {
                 "generator",
             ),
         ];
+        flows.extend(multichannel::flows(shm_base, domain_id));
         let e = MxlEngine {
             inner: Arc::new(Inner {
                 base: shm_base.to_string(),
@@ -1146,6 +1153,7 @@ impl MxlEngine {
                 active_source: Mutex::new(DEFAULT_SOURCE.to_string()),
                 lock_fds: Mutex::new(Vec::new()),
                 ext_cache: Mutex::new(HashMap::new()),
+                multi: multichannel::Generators::new(),
             }),
         };
         e.publish_wbs_test_signals_domain();
@@ -1165,16 +1173,19 @@ impl MxlEngine {
         self.inner.active_source.lock().unwrap().clone()
     }
 
-    /// Python generators_enabled: [("tone", on), ("bit_spitter", on)].
+    /// Python generators_enabled: [("tone", on), ("bit_spitter", on)], then the 8-channel ones.
     pub fn generators_enabled(&self) -> Vec<(String, bool)> {
-        vec![
+        let mut g = vec![
             ("tone".into(), self.inner.tone_enabled.load(Ordering::Acquire)),
             ("bit_spitter".into(), self.inner.bit_enabled.load(Ordering::Acquire)),
-        ]
+        ];
+        g.extend(multichannel::generators_enabled(&self.inner));
+        g
     }
 
     pub fn flow(&self, flow_id: &str) -> Option<Arc<MxlFlow>> {
         self.inner.flows.iter().find(|f| f.flow_id == flow_id).cloned()
+            .or_else(|| spitter8::live_flow().filter(|f| f.flow_id == flow_id))
     }
 
     pub fn master_flow(&self) -> Arc<MxlFlow> {
@@ -1190,7 +1201,7 @@ impl MxlEngine {
     }
 
     pub fn flow_ids(&self) -> Vec<String> {
-        self.inner.flows.iter().map(|f| f.flow_id.clone()).collect()
+        self.inner.flows.iter().chain(spitter8::live_flow().as_ref()).map(|f| f.flow_id.clone()).collect()
     }
 
     /// Creates and populates the 'Ward-Beck Test Signals' MXL domain (domain_def.json,
@@ -1320,6 +1331,7 @@ impl MxlEngine {
             let i = inner.clone();
             *inner.meter_thread.lock().unwrap() = Some(std::thread::spawn(move || i.meter_worker()));
         }
+        spitter8::on_engine_start(&inner.base, &inner.domain_id);
     }
 
     /// Stops all workers, terminates the parec bridge, closes the flows and releases flocks.
@@ -1332,6 +1344,7 @@ impl MxlEngine {
         for f in &inner.flows {
             f.close();
         }
+        spitter8::on_engine_stop();
         release_locks(&mut inner.lock_fds.lock().unwrap());
     }
 
@@ -1353,7 +1366,7 @@ impl MxlEngine {
         let (flag, slot): (&AtomicBool, &Mutex<Option<JoinHandle<()>>>) = match name {
             "tone" => (&inner.tone_enabled, &inner.tone_thread),
             "bit_spitter" => (&inner.bit_enabled, &inner.bit_thread),
-            _ => return,
+            _ => return multichannel::start_generator(inner, name),
         };
         flag.store(true, Ordering::Release);
         if alive(slot) {
@@ -1384,6 +1397,7 @@ impl MxlEngine {
             f.clear();
             cleared.push(f.flow_id.clone());
         }
+        cleared.extend(multichannel::stop_generators(inner));
         cleared
     }
 
@@ -1392,7 +1406,7 @@ impl MxlEngine {
         json!({
             "tai_ns": current_tai_ns(),
             "ntp_sec": f64v(util::now_f64()),
-            "flows": self.inner.flows.iter().map(|f| f.ring_snapshot(bins)).collect::<Vec<_>>(),
+            "flows": self.inner.flows.iter().chain(spitter8::live_flow().as_ref()).map(|f| f.ring_snapshot(bins)).collect::<Vec<_>>(),
         })
     }
 
@@ -1944,7 +1958,7 @@ mod tests {
         let doms = e.scan_all_domains();
         assert!(doms.get("Ward-Beck Test Signals").is_some());
         assert!(doms.get("exercise-4").is_some());
-        assert_eq!(doms["domain-wbs-dmf-01"]["flows"].as_array().unwrap().len(), 3);
+        assert_eq!(doms["domain-wbs-dmf-01"]["flows"].as_array().unwrap().len(), e.flow_ids().len());
 
         // engine flow cursor maths
         let m = e.master_flow();
@@ -1987,8 +2001,8 @@ mod tests {
         let keys: Vec<_> = t.as_object().unwrap().keys().cloned().collect();
         assert_eq!(keys, ["domain_id", "shm_base_dir", "active_source", "flows", "domains", "tai_epoch_ns", "ntp_sec", "second_of_10", "buffer_duration_sec"]);
         let r = e.get_rings(60);
-        assert_eq!(r["flows"].as_array().unwrap().len(), 3);
-        assert_eq!(e.stop_generators(), vec!["wbs-flow-ref-tone", "wbs-flow-bit-spitter"]);
+        assert_eq!(r["flows"].as_array().unwrap().len(), e.flow_ids().len());
+        assert_eq!(e.stop_generators()[..2], ["wbs-flow-ref-tone", "wbs-flow-bit-spitter"]);
         e.stop();
         let _ = fs::remove_dir_all(&base);
     }
