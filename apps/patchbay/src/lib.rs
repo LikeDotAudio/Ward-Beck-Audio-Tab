@@ -146,7 +146,7 @@ pub fn routes_json() -> Value {
 /// {"active": TEST_TONE_ACTIVE, "freq": TEST_TONE_FREQ}
 pub fn test_tone_json() -> Value {
     let g = d();
-    json!({"active": g.tone_active, "freq": g.tone_freq, "freq_r": g.tone.freq_r, "level_db": g.tone.level_db, "channel": g.tone.channel})
+    json!({"active": g.tone_active, "freq": g.tone_freq, "freq_r": g.tone.freq_r, "level_db": g.tone.level_db, "channel": g.tone.channel, "beep_hz": g.tone.beep_hz, "beep_left": g.tone.beep_left})
 }
 
 pub fn test_tone_active() -> bool {
@@ -1090,11 +1090,15 @@ pub struct ToneSpec {
     pub level_db: f64,
     /// stereo | left | right | invert
     pub channel: String,
+    /// Beeps per second (a beep every 1/n s, the tone on for half of it); 0 = steady.
+    pub beep_hz: f64,
+    /// Beep the left channel only (stereo ident).
+    pub beep_left: bool,
 }
 
 impl Default for ToneSpec {
     fn default() -> Self {
-        ToneSpec { freq: 1000.0, freq_r: None, level_db: -18.0, channel: "stereo".into() }
+        ToneSpec { freq: 1000.0, freq_r: None, level_db: -18.0, channel: "stereo".into(), beep_hz: 0.0, beep_left: false }
     }
 }
 
@@ -1107,6 +1111,8 @@ impl ToneSpec {
             freq_r: data.get("freq_r").and_then(|v| v.as_f64()).filter(|f| *f > 0.0),
             level_db: data.get("level_db").and_then(|v| v.as_f64()).unwrap_or(d.level_db),
             channel: data.get("channel").and_then(|v| v.as_str()).unwrap_or("stereo").to_string(),
+            beep_hz: data.get("beep_hz").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 20.0),
+            beep_left: data.get("beep_left").map(py::truthy).unwrap_or(false),
         })
     }
 }
@@ -1125,8 +1131,8 @@ pub fn start_test_tone(spec: ToneSpec) -> Result<(), String> {
     Ok(())
 }
 
-/// s16le stereo frames of a ToneSpec; `phase` is (left, right).
-pub fn tone_spec_chunk(spec: &ToneSpec, phase: &mut (f64, f64), chunk: usize) -> Vec<u8> {
+/// s16le stereo frames of a ToneSpec; `phase` is (left, right, sample count).
+pub fn tone_spec_chunk(spec: &ToneSpec, phase: &mut (f64, f64, u64), chunk: usize) -> Vec<u8> {
     let two_pi = 2.0 * std::f64::consts::PI;
     let amp = if spec.level_db <= -90.0 { 0.0 } else { 10f64.powf(spec.level_db / 20.0) };
     let (sl, sr) = (two_pi * spec.freq / 48000.0, two_pi * spec.freq_r.unwrap_or(spec.freq) / 48000.0);
@@ -1134,6 +1140,16 @@ pub fn tone_spec_chunk(spec: &ToneSpec, phase: &mut (f64, f64), chunk: usize) ->
     for _ in 0..chunk {
         let mut l = if spec.freq > 0.0 { amp * phase.0.sin() } else { 0.0 };
         let mut r = if spec.freq > 0.0 { amp * phase.1.sin() } else { 0.0 };
+        if spec.beep_hz > 0.0 {
+            let off = (phase.2 as f64 * spec.beep_hz / 48000.0).fract() >= 0.5;
+            if off {
+                l = 0.0;
+                if !spec.beep_left {
+                    r = 0.0;
+                }
+            }
+        }
+        phase.2 += 1;
         match spec.channel.as_str() {
             "left" => r = 0.0,
             "right" => l = 0.0,
@@ -1184,7 +1200,7 @@ fn tone_stream_worker(spec: ToneSpec) {
     };
     let pid = child.id();
     d().tone_pid = Some(pid);
-    let mut p = (0.0f64, 0.0f64);
+    let mut p = (0.0f64, 0.0f64, 0u64);
     let mut stdin = child.stdin.take();
     loop {
         let active = {
@@ -1592,11 +1608,17 @@ mod tests {
         assert_eq!(s[2], -s[3], "channel B inverted");
         assert!(s[4] > 0 && s[4] < 3300);
         assert_eq!(base64_decode("AAEC/w==").unwrap(), vec![0, 1, 2, 255]);
-        let spec = ToneSpec { freq: 1000.0, freq_r: Some(4000.0), level_db: -20.0, channel: "stereo".into() };
-        let c = tone_spec_chunk(&spec, &mut (0.0, 0.0), 3);
+        let spec = ToneSpec { freq: 1000.0, freq_r: Some(4000.0), level_db: -20.0, channel: "stereo".into(), beep_hz: 0.0, beep_left: false };
+        let c = tone_spec_chunk(&spec, &mut (0.0, 0.0, 0), 3);
         let s: Vec<i16> = c.chunks(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
         assert_eq!(s[2], (0.1 * (2.0 * std::f64::consts::PI / 48.0).sin() * 32767.0) as i16);
         assert_eq!(s[3], (0.1 * (2.0 * std::f64::consts::PI / 12.0).sin() * 32767.0) as i16, "right at 4 kHz");
+        // beep 2 per second, left only: the second quarter second has a silent left, steady right
+        let beep = ToneSpec { freq: 1000.0, freq_r: None, level_db: -20.0, channel: "stereo".into(), beep_hz: 2.0, beep_left: true };
+        let c = tone_spec_chunk(&beep, &mut (0.0, 0.0, 0), 24000);
+        let s: Vec<i16> = c.chunks(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+        let (on, off) = (&s[2 * 1000..2 * 1100], &s[2 * 13000..2 * 13100]);
+        assert!(on.chunks(2).any(|f| f[0] != 0) && off.chunks(2).all(|f| f[0] == 0) && off.chunks(2).any(|f| f[1] != 0));
     }
 
     #[test]
