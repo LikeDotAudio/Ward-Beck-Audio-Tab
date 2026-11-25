@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
 //! AMS-81 fold-down: a receiver's channels (up to 8, e.g. a 32ME) to one stereo pair,
 //! after the Ward-Beck AMS8-1A monitor. INPUTS 1/2 · 3/4 · 5/6 · 7/8 pick a pair; PRESETS
-//! A–D are stored L / R mixes (each channel −15…+15 dB or off per side); Lo/Ro folds
+//! A–D are stored L / R mixes (each channel −15…+15 dB or off per side), and each pair keeps
+//! its own two-channel mix too (a level and pan per channel, unity hard L / R to start); Lo/Ro folds
 //! L R C LFE Ls Rs down to stereo (the AMS8-1A MODE1 downmix). The receiver writes the
 //! result as its own stereo ring, so everything downstream sees a plain stereo flow.
 
@@ -13,6 +14,7 @@ pub const CHANNELS: usize = 8;
 pub const GAIN_MIN: f64 = -15.0;
 pub const GAIN_MAX: f64 = 15.0;
 const PRESETS: [&str; 4] = ["A", "B", "C", "D"];
+const PAIRS: [&str; 4] = ["1/2", "3/4", "5/6", "7/8"];
 const M3DB: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
 /// What the fold-down plays.
@@ -32,6 +34,8 @@ pub type Mix = [[Option<f64>; CHANNELS]; 2];
 pub struct Ams81 {
     pub select: Select,
     pub presets: [Mix; 4],
+    /// Each pair's own mix (only its two channels are ever set).
+    pub pairs: [Mix; 4],
 }
 
 impl Default for Ams81 {
@@ -43,7 +47,8 @@ impl Default for Ams81 {
             m[1][2 * k + 1] = Some(0.0);
             m
         };
-        Ams81 { select: Select::Pair(0), presets: [preset(0), preset(1), preset(2), preset(3)] }
+        let p = [preset(0), preset(1), preset(2), preset(3)];
+        Ams81 { select: Select::Pair(0), presets: p, pairs: p }
     }
 }
 
@@ -61,12 +66,13 @@ impl Ams81 {
             }
         };
         match &self.select {
-            Select::Pair(k) => {
-                add(0, 2 * k, 1.0);
-                add(1, 2 * k + 1, 1.0);
-            }
-            Select::Preset(p) => {
-                for (side, gains) in self.presets[*p].iter().enumerate() {
+            Select::Pair(_) | Select::Preset(_) => {
+                let mix = match &self.select {
+                    Select::Pair(k) => &self.pairs[*k],
+                    Select::Preset(p) => &self.presets[*p],
+                    Select::LoRo => unreachable!(),
+                };
+                for (side, gains) in mix.iter().enumerate() {
                     for (i, g) in gains.iter().enumerate() {
                         if let Some(db) = g {
                             add(side, i, 10f64.powf(db / 20.0) as f32);
@@ -110,10 +116,12 @@ impl Ams81 {
     }
 
     pub fn to_json(&self) -> Value {
+        let mix = |m: &Mix| json!({"L": m[0].to_vec(), "R": m[1].to_vec()});
         let presets: Map<String, Value> = PRESETS
             .iter()
-            .enumerate()
-            .map(|(i, n)| (n.to_string(), json!({"L": self.presets[i][0].to_vec(), "R": self.presets[i][1].to_vec()})))
+            .zip(self.presets.iter())
+            .chain(PAIRS.iter().zip(self.pairs.iter()))
+            .map(|(n, m)| (n.to_string(), mix(m)))
             .collect();
         json!({"select": self.select_name(), "presets": presets})
     }
@@ -123,11 +131,17 @@ impl Ams81 {
         if let Some(s) = v.get("select").and_then(Value::as_str).and_then(Ams81::parse_select) {
             a.select = s;
         }
-        for (i, n) in PRESETS.iter().enumerate() {
+        for (i, n) in PRESETS.iter().chain(PAIRS.iter()).enumerate() {
             for (side, key) in ["L", "R"].iter().enumerate() {
-                if let Some(arr) = v.pointer(&format!("/presets/{n}/{key}")).and_then(Value::as_array) {
+                // JSON pointers escape "/" as "~1" ("1/2" → "1~12")
+                if let Some(arr) = v.pointer(&format!("/presets/{}/{key}", n.replace('/', "~1"))).and_then(Value::as_array) {
                     for (c, g) in arr.iter().take(CHANNELS).enumerate() {
-                        a.presets[i][side][c] = g.as_f64().map(|d| d.clamp(GAIN_MIN, GAIN_MAX));
+                        let db = g.as_f64().map(|d| d.clamp(GAIN_MIN, GAIN_MAX));
+                        if i < 4 {
+                            a.presets[i][side][c] = db;
+                        } else if c / 2 == i - 4 {
+                            a.pairs[i - 4][side][c] = db; // a pair's mix holds only its own channels
+                        }
                     }
                 }
             }
@@ -135,9 +149,14 @@ impl Ams81 {
         a
     }
 
-    /// Set one preset gain: preset A–D, side L / R, channel 0..7, dB (None = off).
+    /// Set one gain: preset A–D or pair 1/2…7/8 (its own two channels only), side L / R,
+    /// channel 0..7, dB (None = off).
     pub fn set_gain(&mut self, preset: &str, side: &str, ch: usize, db: Option<f64>) -> Result<(), String> {
-        let p = PRESETS.iter().position(|n| n.eq_ignore_ascii_case(preset)).ok_or("preset must be A, B, C or D")?;
+        let pair = PAIRS.iter().position(|n| *n == preset);
+        let p = match pair {
+            Some(k) => k,
+            None => PRESETS.iter().position(|n| n.eq_ignore_ascii_case(preset)).ok_or("preset must be A, B, C, D or a pair 1/2 … 7/8")?,
+        };
         let s = match side {
             "L" | "l" => 0,
             "R" | "r" => 1,
@@ -146,7 +165,12 @@ impl Ams81 {
         if ch >= CHANNELS {
             return Err("channel must be 1 to 8".into());
         }
-        self.presets[p][s][ch] = db.map(|d| d.clamp(GAIN_MIN, GAIN_MAX));
+        let db = db.map(|d| d.clamp(GAIN_MIN, GAIN_MAX));
+        match pair {
+            Some(k) if ch / 2 != k => return Err(format!("pair {} mixes channels {} and {} only", PAIRS[k], 2 * k + 1, 2 * k + 2)),
+            Some(k) => self.pairs[k][s][ch] = db,
+            None => self.presets[p][s][ch] = db,
+        }
         Ok(())
     }
 }
@@ -216,5 +240,21 @@ mod tests {
         let b = Ams81::from_json(&a.to_json());
         assert_eq!(b.presets[1][1][0], Some(15.0));
         assert_eq!(b.presets[1][1][3], Some(0.0));
+    }
+
+    #[test]
+    fn pair_mixes() {
+        let mut a = Ams81 { select: Select::Pair(1), ..Default::default() };
+        // channel 3 centred at -3 dB on both sides, channel 4 off
+        a.set_gain("3/4", "R", 2, Some(-3.0)).unwrap();
+        a.set_gain("3/4", "R", 3, None).unwrap();
+        let [l, r] = a.fold(&eight());
+        assert!((l[0] - 0.3).abs() < 1e-6);
+        assert!((r[0] - 0.3 * 10f32.powf(-3.0 / 20.0)).abs() < 1e-6);
+        assert!(a.set_gain("3/4", "L", 0, Some(0.0)).is_err(), "a pair mixes its own channels only");
+        let b = Ams81::from_json(&a.to_json());
+        assert_eq!(b.pairs[1][1][2], Some(-3.0));
+        assert_eq!(b.pairs[1][1][3], None);
+        assert_eq!(b.pairs[0], Ams81::default().pairs[0]);
     }
 }
