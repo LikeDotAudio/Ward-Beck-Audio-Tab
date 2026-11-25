@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
-//! Module inserts: Ward-Beck module plugins (M466 Compressor - Limiter, M467 Noise Gate) in a receiver's path, in order, each switched in or out.
+//! Module inserts: Ward-Beck module plugins (M466 Compressor - Limiter, M467 Noise Gate, M462 / M462A / M462B equalisers) in a receiver's path, in order, each switched in or out.
 //!
 //! The DSP of each module comes from that module's own repo (MODULES.<CATEGORY>.<Mxxx>/plugin, the same
 //! crate that builds its VST3 / CLAP plugin). The receivers ask `services::inserts()` for every packet;
@@ -42,6 +42,9 @@ struct ModuleDef {
 const MODULES: &[ModuleDef] = &[
     ModuleDef { id: "M466", name: "Compressor - Limiter", year: 1976, make: || Box::new(m466::Insert::default()) },
     ModuleDef { id: "M467", name: "Noise Gate", year: 1976, make: || Box::new(m467::Insert::default()) },
+    ModuleDef { id: "M462", name: "Equalizer", year: 1974, make: || Box::new(eqs::M462Insert::default()) },
+    ModuleDef { id: "M462A", name: "Equalizer Module", year: 1976, make: || Box::new(eqs::M462AInsert::default()) },
+    ModuleDef { id: "M462B", name: "Parametric EQ", year: 1974, make: || Box::new(eqs::M462BInsert::default()) },
 ];
 
 struct Insert {
@@ -310,6 +313,85 @@ mod m467 {
     }
 }
 
+/// The M462 family equalisers (MODULES.FILTERS.M462, M462A, M462B). Each control is a number or a flag,
+/// checked against the panel's range.
+mod eqs {
+    use super::Dsp;
+    use serde_json::{json, Map, Value};
+
+    fn num(k: &str, v: &Value, lo: f32, hi: f32) -> Result<f32, String> {
+        let x = v.as_f64().ok_or_else(|| format!("{k} must be a number"))? as f32;
+        if !(lo..=hi).contains(&x) {
+            return Err(format!("{k} {x} is outside {lo} … {hi}"));
+        }
+        Ok(x)
+    }
+    fn flag(k: &str, v: &Value) -> Result<bool, String> {
+        v.as_bool().ok_or_else(|| format!("{k} must be true or false"))
+    }
+
+    macro_rules! eq_insert {
+        ($Name:ident, $krate:ident, $Dsp:ident, $id:literal, { $($f:ident: $kind:ident $( ($lo:expr, $hi:expr) )?),* $(,)? }) => {
+            pub struct $Name {
+                rate: u32,
+                dsp: $krate::dsp::$Dsp,
+            }
+            impl Default for $Name {
+                fn default() -> Self {
+                    $Name { rate: 48000, dsp: $krate::dsp::$Dsp::new(48000.0) }
+                }
+            }
+            impl Dsp for $Name {
+                fn process(&mut self, sample_rate: u32, planar: &mut [Vec<f32>]) {
+                    if sample_rate != self.rate && sample_rate > 0 {
+                        self.rate = sample_rate;
+                        self.dsp.set_sample_rate(sample_rate as f32);
+                    }
+                    let mut chans: Vec<&mut [f32]> = planar.iter_mut().map(|c| c.as_mut_slice()).collect();
+                    self.dsp.process(&mut chans);
+                }
+                fn settings(&self) -> Value {
+                    let s = self.dsp.settings();
+                    json!({ $( stringify!($f): s.$f ),* })
+                }
+                fn set(&mut self, c: &Map<String, Value>) -> Result<(), String> {
+                    let mut s = self.dsp.settings();
+                    for (k, v) in c {
+                        match k.as_str() {
+                            $( stringify!($f) => eq_insert!(@set s.$f, k, v, $kind $( ($lo, $hi) )?), )*
+                            _ => return Err(format!("{} has no control '{k}'", $id)),
+                        }
+                    }
+                    self.dsp.set(s);
+                    Ok(())
+                }
+                fn meters(&self) -> Value {
+                    json!({})
+                }
+            }
+        };
+        (@set $dst:expr, $k:ident, $v:ident, flag) => { $dst = flag($k, $v)? };
+        (@set $dst:expr, $k:ident, $v:ident, num ($lo:expr, $hi:expr)) => { $dst = num($k, $v, $lo, $hi)? };
+    }
+
+    eq_insert!(M462Insert, wbs_m462, M462, "M462", {
+        eq_in: flag, lf_bell: flag, lf_hz: num(25.0, 400.0), lf_gain_db: num(-15.0, 15.0),
+        mf_q_high: flag, mf_hz: num(400.0, 5400.0), mf_gain_db: num(-15.0, 15.0),
+        hf_bell: flag, hf_hz: num(1600.0, 24000.0), hf_gain_db: num(-15.0, 15.0),
+    });
+    eq_insert!(M462AInsert, wbs_m462a, M462A, "M462A", {
+        eq_in: flag, lf_gain_db: num(-14.0, 14.0), lf_150: flag, lf_shelf: flag,
+        mid_hz: num(200.0, 7000.0), mid_q: num(0.6, 2.5), mid_gain_db: num(-14.0, 14.0),
+        hf_gain_db: num(-14.0, 14.0), hf_10k: flag, drive_pct: num(0.0, 100.0),
+    });
+    eq_insert!(M462BInsert, wbs_m462b, M462B, "M462B", {
+        eq_in: flag, lf_hz: num(30.0, 400.0), lf_gain_db: num(-14.0, 14.0),
+        lmf_hz: num(150.0, 2000.0), lmf_q: num(0.5, 3.0), lmf_gain_db: num(-14.0, 14.0),
+        hmf_hz: num(800.0, 8000.0), hmf_q: num(0.5, 3.0), hmf_gain_db: num(-14.0, 14.0),
+        hf_hz: num(3000.0, 16000.0), hf_gain_db: num(-14.0, 14.0),
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,6 +414,18 @@ mod tests {
         p(json!({"slot": "moip", "index": 0, "on": false})).unwrap();
         assert!(!active("moip"));
         p(json!({"slot": "moip", "index": 0, "remove": true})).unwrap();
+        // the equalisers take their controls by name, within the panel's range
+        for m in ["M462", "M462A", "M462B"] {
+            p(json!({"slot": "moip", "add": m})).unwrap();
+        }
+        assert!(p(json!({"slot": "moip", "index": 1, "settings": {"mid_gain_db": 20.0}})).is_err());
+        let st = p(json!({"slot": "moip", "index": 2, "settings": {"lmf_gain_db": 6.0, "eq_in": true}})).unwrap();
+        assert_eq!(st["slots"]["moip"][2]["settings"]["lmf_gain_db"], 6.0);
+        let mut pk = vec![vec![0.1f32; 480]];
+        process("moip", 48000, &mut pk);
+        for _ in 0..3 {
+            p(json!({"slot": "moip", "index": 0, "remove": true})).unwrap();
+        }
         assert!(status()["slots"]["moip"].as_array().unwrap().is_empty());
     }
 }

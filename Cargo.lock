@@ -871,6 +871,9 @@ version = "2.2.1"
 dependencies = [
  "serde_json",
  "wbs-log",
+ "wbs-m462",
+ "wbs-m462a",
+ "wbs-m462b",
  "wbs-m466",
  "wbs-m467",
  "wbs-plugin",
@@ -894,6 +897,18 @@ version = "2.2.1"
 dependencies = [
  "serde_json",
 ]
+
+[[package]]
+name = "wbs-m462"
+version = "0.1.0"
+
+[[package]]
+name = "wbs-m462a"
+version = "0.1.0"
+
+[[package]]
+name = "wbs-m462b"
+version = "0.1.0"
 
 [[package]]
 name = "wbs-m466"
