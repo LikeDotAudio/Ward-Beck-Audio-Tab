@@ -872,6 +872,7 @@ dependencies = [
  "serde_json",
  "wbs-log",
  "wbs-m466",
+ "wbs-m467",
  "wbs-plugin",
  "wbs-pyshim",
 ]
@@ -896,6 +897,10 @@ dependencies = [
 
 [[package]]
 name = "wbs-m466"
+version = "0.1.0"
+
+[[package]]
+name = "wbs-m467"
 version = "0.1.0"
 
 [[package]]

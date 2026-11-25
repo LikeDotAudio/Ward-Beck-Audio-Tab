@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
-//! Module inserts: Ward-Beck module plugins in a receiver's path, in order, each switched in or out.
+//! Module inserts: Ward-Beck module plugins (M466 Compressor - Limiter, M467 Noise Gate) in a receiver's path, in order, each switched in or out.
 //!
 //! The DSP of each module comes from that module's own repo (MODULES.<CATEGORY>.<Mxxx>/plugin, the same
 //! crate that builds its VST3 / CLAP plugin). The receivers ask `services::inserts()` for every packet;
@@ -39,7 +39,10 @@ struct ModuleDef {
     make: fn() -> Box<dyn Dsp>,
 }
 
-const MODULES: &[ModuleDef] = &[ModuleDef { id: "M466", name: "Compressor - Limiter", year: 1976, make: || Box::new(m466::Insert::default()) }];
+const MODULES: &[ModuleDef] = &[
+    ModuleDef { id: "M466", name: "Compressor - Limiter", year: 1976, make: || Box::new(m466::Insert::default()) },
+    ModuleDef { id: "M467", name: "Noise Gate", year: 1976, make: || Box::new(m467::Insert::default()) },
+];
 
 struct Insert {
     module: &'static str,
@@ -239,6 +242,70 @@ mod m466 {
             let m = self.dsp.meters;
             json!({"comp_gr_db": m.comp_gr_db, "lim_gr_db": m.lim_gr_db, "led6": m.led6, "led12": m.led12,
                    "comp_led": m.comp_led, "lim_led": m.lim_led, "out_dbfs": m.out_dbfs})
+        }
+    }
+}
+
+/// M467 Noise Gate (MODULES.DYNAMICS.M467).
+mod m467 {
+    use super::Dsp;
+    use serde_json::{json, Map, Value};
+    use wbs_m467::dsp::{Settings, M467};
+
+    pub struct Insert {
+        rate: u32,
+        dsp: M467,
+    }
+
+    impl Default for Insert {
+        fn default() -> Self {
+            Insert { rate: 48000, dsp: M467::new(48000.0) }
+        }
+    }
+
+    impl Dsp for Insert {
+        fn process(&mut self, sample_rate: u32, planar: &mut [Vec<f32>]) {
+            if sample_rate != self.rate && sample_rate > 0 {
+                self.rate = sample_rate;
+                self.dsp.set_sample_rate(sample_rate as f32);
+            }
+            let mut chans: Vec<&mut [f32]> = planar.iter_mut().map(|c| c.as_mut_slice()).collect();
+            self.dsp.process(&mut chans);
+        }
+
+        fn settings(&self) -> Value {
+            let s = self.dsp.settings();
+            json!({"gate": s.gate, "thld_db": s.thld_db, "atten_db": s.atten_db, "rls_s": s.rls_s, "fast": s.fast, "comp_tie": s.comp_tie})
+        }
+
+        fn set(&mut self, c: &Map<String, Value>) -> Result<(), String> {
+            let mut s: Settings = self.dsp.settings();
+            for (k, v) in c {
+                let num = |lo: f32, hi: f32| -> Result<f32, String> {
+                    let x = v.as_f64().ok_or_else(|| format!("{k} must be a number"))? as f32;
+                    if !(lo..=hi).contains(&x) {
+                        return Err(format!("{k} {x} is outside {lo} … {hi}"));
+                    }
+                    Ok(x)
+                };
+                let flag = || v.as_bool().ok_or_else(|| format!("{k} must be true or false"));
+                match k.as_str() {
+                    "gate" => s.gate = flag()?,
+                    "fast" => s.fast = flag()?,
+                    "thld_db" => s.thld_db = num(-50.0, 0.0)?,
+                    "atten_db" => s.atten_db = num(0.0, 50.0)?,
+                    "rls_s" => s.rls_s = num(0.1, 5.0)?,
+                    "comp_tie" => s.comp_tie = num(0.0, 2.0)? as u8,
+                    _ => return Err(format!("M467 has no control '{k}'")),
+                }
+            }
+            self.dsp.set(s);
+            Ok(())
+        }
+
+        fn meters(&self) -> Value {
+            let m = self.dsp.meters;
+            json!({"open": m.open, "atten_db": m.atten_db, "vu": m.vu})
         }
     }
 }

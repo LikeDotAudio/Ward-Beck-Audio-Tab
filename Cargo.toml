@@ -62,6 +62,7 @@ wbs-inserts = { path = "apps/inserts" }
 # Ward-Beck module plugins: each module's DSP from its own module repo, a submodule in modules/
 # (modules/M466 = WardBeckSystems/MODULES.DYNAMICS.M466), without its VST.
 wbs-m466 = { path = "modules/M466/plugin", default-features = false }
+wbs-m467 = { path = "modules/M467/plugin", default-features = false }
 
 [profile.release]
 opt-level = 3

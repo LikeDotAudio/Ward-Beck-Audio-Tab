@@ -13,3 +13,4 @@ wbs-plugin.workspace = true
 wbs-pyshim.workspace = true
 # Each module's DSP comes from its own module repo (MODULES.<CATEGORY>.<Mxxx>/plugin), without the VST
 wbs-m466.workspace = true
+wbs-m467.workspace = true
