@@ -768,6 +768,7 @@ dependencies = [
  "wbs-common",
  "wbs-diagnostics",
  "wbs-hardware",
+ "wbs-inserts",
  "wbs-listen",
  "wbs-log",
  "wbs-mxl",
@@ -865,6 +866,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wbs-inserts"
+version = "2.2.1"
+dependencies = [
+ "serde_json",
+ "wbs-log",
+ "wbs-m466",
+ "wbs-plugin",
+ "wbs-pyshim",
+]
+
+[[package]]
 name = "wbs-listen"
 version = "2.2.1"
 dependencies = [
@@ -881,6 +893,10 @@ version = "2.2.1"
 dependencies = [
  "serde_json",
 ]
+
+[[package]]
+name = "wbs-m466"
+version = "0.1.0"
 
 [[package]]
 name = "wbs-mxl"
@@ -1211,3 +1227,7 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[patch.unused]]
+name = "wbs-panel"
+version = "0.1.0"

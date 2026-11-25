@@ -27,6 +27,7 @@ fn plug_all() {
     wbs_mxl::plug();
     wbs_patchbay::plug();
     wbs_receivers::plug();
+    wbs_inserts::plug();
     wbs_hardware::plug();
     wbs_ntp::plug();
     wbs_nmos::plug();

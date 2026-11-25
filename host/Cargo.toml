@@ -31,6 +31,7 @@ wbs-pipeline.workspace = true
 wbs-listen.workspace = true
 wbs-diagnostics.workspace = true
 wbs-setup.workspace = true
+wbs-inserts.workspace = true
 
 [features]
 # Vendor names for PTP clocks (see apps/aoip).

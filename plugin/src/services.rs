@@ -161,6 +161,17 @@ pub trait Receivers: Send + Sync {
 }
 slot!(Receivers, receivers, provide_receivers, RECEIVERS, NoReceivers);
 
+/// Module inserts (apps/inserts): Ward-Beck module plugins (M466 …) in a receiver's path.
+pub trait Inserts: Send + Sync {
+    /// Whether `slot` (network, moip) has an insert switched in: if not, the receiver skips the copy.
+    fn active(&self, _slot: &str) -> bool {
+        false
+    }
+    /// Run `slot`'s inserts over one packet of planar audio at `sample_rate`, in place.
+    fn process(&self, _slot: &str, _sample_rate: u32, _planar: &mut [Vec<f32>]) {}
+}
+slot!(Inserts, inserts, provide_inserts, INSERTS, NoInserts);
+
 /// AES67 transmitters (apps/aes67).
 pub trait Aes67: Send + Sync {
     fn status(&self) -> Value {

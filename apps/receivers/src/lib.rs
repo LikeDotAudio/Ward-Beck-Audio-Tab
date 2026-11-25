@@ -359,6 +359,17 @@ impl TpState {
     /// ring, kept at the ring's packet size and rate.
     fn write_planar(&mut self, slot: usize, planar: &[Vec<f32>]) {
         let Some(r) = self.ring.as_mut() else { return };
+        // Module inserts (M466 …) sit at the receiver's input: everything after hears them
+        let ins = wbs_plugin::services::inserts();
+        let processed;
+        let planar = if slot != TEST_POINT && ins.active(SLOTS[slot].name) {
+            let mut p = planar.to_vec();
+            ins.process(SLOTS[slot].name, r.sample_rate, &mut p);
+            processed = p;
+            &processed[..]
+        } else {
+            planar
+        };
         r.write(planar);
         if SLOTS[slot].fold_flow_id.is_empty() {
             return;
