@@ -1,4 +1,4 @@
-<!-- Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved. -->
+<!-- Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved. -->
 # WARD BECK TAP on Linux with Docker
 
 The TAP is not a self-contained service. It drives the **host's** PipeWire/PulseAudio

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Port of the CBC / Radio-Canada MXL test-set proxy in ward-beck-audio-tab.py.
 //!
 //! CBC/Radio-Canada MXL hands-on stack (docker-compose.mxl-demo.yml). The site can only

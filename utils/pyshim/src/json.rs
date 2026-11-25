@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Python json.dumps(indent=...) and float repr, as the MXL engine writes domain_def.json /
 //! flow_def.json (byte-identical to the Python files).
 

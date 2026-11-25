@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! What a tester sends back: GET /api/diagnostics (JSON) and GET /api/diagnostics/bundle
 //! (one text file: the report, every recent problem and the log tail). Written for a
 //! machine nobody here can see, so it states everything it can find out by itself.

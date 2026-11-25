@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 # Build the WARD BECK TAP image and publish it to GHCR:
 #   push to main  -> ghcr.io/wardbecksystems/ward-beck-audio-tap:latest, :main, :sha-<short>
 #   tag v1.2.3    -> :1.2.3, :1.2, :1 (and :latest is left on main)

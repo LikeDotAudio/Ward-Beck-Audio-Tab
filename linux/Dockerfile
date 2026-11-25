@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 # WARD BECK TAP — virtual patchbay, VU bridge, MXL ring buffers and AoIP listener.
 #
 # The TAP drives the HOST's audio server, so the container must share it:
@@ -33,7 +33,7 @@ FROM debian:bookworm-slim
 
 LABEL org.opencontainers.image.title="WARD BECK TAP" \
       org.opencontainers.image.description="Ward-Beck Systems audio tap: virtual patchbay, VU bridge, EBU DMF / MXL ring buffers, SAP/SIP/PTP AoIP listener" \
-      org.opencontainers.image.vendor="Ward-Beck Systems (Ward-Beck.ca)" \
+      org.opencontainers.image.vendor="Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca)" \
       org.opencontainers.image.licenses="LicenseRef-Ward-Beck-Proprietary" \
       org.opencontainers.image.source="https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap"
 

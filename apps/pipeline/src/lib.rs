@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Port of pipeline_inspector.py: the 4-layer Linux audio + AoIP pipeline report.
 //!   1. Kernel & Hardware Layer: ALSA cards, PCM devices, mixer controls (aplay/amixer).
 //!   2. Graph & Session Layer: PipeWire graph & WirePlumber session manager (wpctl/pw-dump).

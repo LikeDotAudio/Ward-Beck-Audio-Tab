@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Diagnostics plugs in the report and the bundle a tester sends, and the TAP's log tail.
 
 use wbs_plugin::reply::qs_first;

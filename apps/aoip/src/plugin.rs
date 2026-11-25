@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! The AoIP listener plugs in /api/aoip*, offers its snapshot and the PTP leader, and starts
 //! the SAP / SIP / PTP listeners (Dante device IPs come from the NMOS service).
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! The CBC test set plugs in its proxy routes, its page (/CBC) and its endpoint index
 //! (/api/cbc), and offers its state and HTTP helpers.
 

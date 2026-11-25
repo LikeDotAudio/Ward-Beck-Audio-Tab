@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! The receivers plug in /api/testpoint and /api/receiver, and offer their rings and audio
 //! (the MXL engine serves them next to its own flows).
 

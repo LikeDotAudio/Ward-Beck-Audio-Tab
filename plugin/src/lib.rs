@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! The plugin contract of the Ward-Beck Audio Tap.
 //!
 //! Every application (apps/<name>) is a crate that depends only on this contract and on the

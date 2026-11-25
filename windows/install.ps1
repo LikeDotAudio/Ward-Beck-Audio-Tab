@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 # Ward-Beck Audio Tap for Windows: installs the Tap for this user and starts it at sign-in.
 #   Right-click > Run with PowerShell, or:  powershell -ExecutionPolicy Bypass -File install.ps1
 # Nothing needs administrator rights. Windows Firewall may ask once to let the Tap listen

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! NMOS plugs in /api/nmos, offers what it discovered, and runs the discovery loop.
 
 use serde_json::{json, Value};

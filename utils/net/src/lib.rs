@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Network helpers shared by the MXL engine, the AES67 transmitters and the AoIP listener:
 //! this host's address and the RFC 7273 reference clock line of an SDP.
 

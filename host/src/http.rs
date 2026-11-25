@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Port of WBSHandler in ward-beck-audio-tab.py: the HTTP API and UI on :8467.
 //!
 //! The host owns only the transport: the front page, the SSE meter stream and shutdown. Every

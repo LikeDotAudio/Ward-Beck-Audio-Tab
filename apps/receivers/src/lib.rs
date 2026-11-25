@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Port of test_point.py: one test point at a time (hw / pw / mxl / aoip), its own ring + meters.
 //! CONTRACT: keep these pub signatures.
 //!

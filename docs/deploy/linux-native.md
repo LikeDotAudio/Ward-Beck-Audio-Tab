@@ -1,4 +1,4 @@
-<!-- Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved. -->
+<!-- Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved. -->
 # WARD BECK TAP on Linux, native (no Docker)
 
 This is a research document on shipping the `ward-beck-audio-tab` daemon (the WARD BECK TAP)

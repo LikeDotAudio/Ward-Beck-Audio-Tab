@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Python str.strip() / str.splitlines() / str.isspace(), as the pipeline and listen reports used them.
 
 /// Python str.isspace() for one char.

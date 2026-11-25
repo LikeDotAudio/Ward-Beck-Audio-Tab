@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 # Installer for Ward-Beck Audio Tab daemon & systemd user service.
 
 set -euo pipefail

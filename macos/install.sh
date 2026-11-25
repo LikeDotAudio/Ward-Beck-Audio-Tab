@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 # Ward-Beck Audio Tap for macOS: installs the Tap for this user and starts it at login.
 #   bash install.sh
 # The first time it captures audio, macOS asks for permission to record system audio:

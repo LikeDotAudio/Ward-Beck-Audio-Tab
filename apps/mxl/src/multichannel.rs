@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Eight-channel generator flows: engine flows like the POD-33 tone, written continuously
 //! into their own 8-channel rings while the engine runs (on by default, so `start()`
 //! engages them), killed with the others by `stop_generators()` and re-engaged by

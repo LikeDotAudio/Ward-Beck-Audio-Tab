@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! ABS-1 ×4 Bit Spitter (8 ch): four ABS-1 pairs (Generators crate, `spitter8`) written
 //! straight into their own 8-channel MXL flow, `wbs-flow-bit-spitter-8`, in the engine's
 //! domain. Eight channels cannot ride the stereo pacat path of the ABS-1 in patchbay.

@@ -1,4 +1,4 @@
-<!-- Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved. -->
+<!-- Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved. -->
 # WARD BECK TAP on Windows: deployment and packaging
 
 This document covers how a Windows user runs the TAP. There are two routes:

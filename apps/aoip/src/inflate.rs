@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Minimal zlib (RFC 1950) / DEFLATE (RFC 1951) decoder for compressed SAP payloads
 //! (Python: zlib.decompress). Stored, fixed and dynamic Huffman blocks; Adler-32 checked.
 

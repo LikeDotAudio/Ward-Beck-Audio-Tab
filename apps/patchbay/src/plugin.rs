@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! The patchbay plugs in /api/status, the source / route / generator controls, Reset All and
 //! restart; offers its buses and sources to the others; and at start-up builds the WBS
 //! topology, then runs the meter reader and the idle-client watchdog.

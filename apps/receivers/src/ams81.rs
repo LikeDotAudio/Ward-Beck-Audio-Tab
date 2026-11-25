@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! AMS-81 fold-down: a receiver's channels (up to 8, e.g. a 32ME) to one stereo pair,
 //! after the Ward-Beck AMS8-1A monitor. INPUTS 1/2 · 3/4 · 5/6 · 7/8 pick a pair; PRESETS
 //! A–D are stored L / R mixes (each channel −15…+15 dB or off per side), and each pair keeps

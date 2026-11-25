@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! What a route answers, and the request helpers every plugin's routes use
 //! (query strings, path segments, JSON bodies), with the Python daemon's semantics.
 

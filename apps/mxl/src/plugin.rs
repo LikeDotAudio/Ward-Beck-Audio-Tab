@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! The MXL engine plugs in /api/mxl* and offers the shared-memory data plane to the others.
 //! The receivers' rings and audio ride along on the same routes (through their service).
 

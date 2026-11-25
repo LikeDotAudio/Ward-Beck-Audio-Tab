@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Port of aoip_listener.py: SAP/SDP, PTP (v1/v2), SIP multicast listeners and PTP over MQTT.
 //! CONTRACT: keep these pub signatures. Parsers may be pub for tests.
 //!

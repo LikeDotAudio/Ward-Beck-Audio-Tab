@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 # Build, test, smoke-run and package the Ward-Beck Audio Tap: one workspace (host/, plugin/, apps/, utils/), three
 # build types (linux/, windows/, macos/), three downloads:
 #   ward-beck-audio-tap-linux.tar.gz   (x86_64 + arm64 binaries; install.sh picks)

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! WARD BECK TAP daemon entry point (port of ward-beck-audio-tab.py __main__).
 //!
 //!   --check / --test / --self-test       validate the build and the audio subsystem, exit

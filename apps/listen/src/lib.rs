@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Port of listen_picker.py: "what should the meters hear?" (apps making noise / sound-card inputs).
 //!
 //! 1. Windows making noise: every app with an uncorked playback stream, named by its

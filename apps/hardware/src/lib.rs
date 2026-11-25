@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Hardware outputs: every sound card output (PipeWire sink) the host has, what each one is
 //! listening to, and a crosspoint per (source, output) that is a real PipeWire loopback.
 //!

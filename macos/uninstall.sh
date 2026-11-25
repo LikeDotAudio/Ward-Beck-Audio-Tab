@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 # Removes the Ward-Beck Audio Tap for this user (logs are kept).
 LABEL="ca.ward-beck.audio-tap"
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! The TAP's virtual buses (PipeWire / PulseAudio null sinks): shared vocabulary between the
 //! patchbay (which makes them) and the hardware grid (which sends HW 1 / HW 2 to the cards).
 

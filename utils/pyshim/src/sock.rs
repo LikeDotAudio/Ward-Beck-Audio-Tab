@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Small helpers that reproduce Python semantics the original code relied on
 //! (round(), str(), truthiness, int(), str.strip()/split(), OSError text), so the
 //! JSON and messages produced by aoip / testpoint are byte-identical to the Python.

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! AES67 transmitters: one per engine MXL flow, the router's MXL67-1 … 4 (Repeater,
 //! POD-33 1 kHz, POD-33 400 / 100 Hz, Bit Spitter), and the loop outs MXL67-5 / 6 that
 //! re-send the network / MoIP receivers' AMS-81 stereo fold-downs (read through the

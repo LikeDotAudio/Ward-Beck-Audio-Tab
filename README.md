@@ -179,4 +179,4 @@ The host keeps only the transport: the dashboard (`/`, `host/web/`), the SSE met
 
 ## 📄 License
 
-Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.

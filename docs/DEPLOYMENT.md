@@ -1,4 +1,4 @@
-<!-- Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved. -->
+<!-- Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved. -->
 # Deploying the Ward-Beck Audio Tap
 
 The Tap (`ward-beck-audio-tab`, HTTP on `127.0.0.1:8467`) drives the host's audio server, so where

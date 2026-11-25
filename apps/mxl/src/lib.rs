@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Port of mxl_engine.py: MXL (EBU DMF) domains and flows in POSIX shared memory.
 //! CONTRACT: the pub items below are used by other modules; keep their signatures.
 //! The on-disk layout under util::shm_base() must stay byte-identical to the Python

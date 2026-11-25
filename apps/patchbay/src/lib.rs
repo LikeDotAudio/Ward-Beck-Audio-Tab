@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Port of ward-beck-audio-tab.py (daemon core): virtual sinks/routes, source list and
 //! per-source meters, test tone, Bit Buddy, Reset All / restart / abandon.
 //! The other applications reach it only through its service (wbs_plugin::services::patchbay()),

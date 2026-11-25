@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+# Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 # Removes the Ward-Beck Audio Tap for this user (the log folder is kept).
 
 $task = 'Ward-Beck Audio Tap'

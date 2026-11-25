@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! The few operating-system calls the Tap makes, one place per OS: signalling its own
 //! child processes, starting them in their own session, file locks on MXL rings,
 //! symlinks, SO_REUSEPORT and the interface list. Linux and macOS use the POSIX calls;

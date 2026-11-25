@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! The Tap's log: one line per event, to the console, to a rotating file and to an
 //! in-memory tail served at /api/log. It is meant to be read by someone who was not
 //! there, on an OS nobody here can test: every client that connects, every command that

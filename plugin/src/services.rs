@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! What the applications offer each other. Each application provides its service once at
 //! start-up (`provide_*`); every other application reaches it through the getter (`mxl()`,
 //! `aoip()`, ...). Every method has an inert default, which is also what a caller gets when

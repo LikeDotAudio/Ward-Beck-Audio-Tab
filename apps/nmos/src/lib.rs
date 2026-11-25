@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
+// Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! Port of NMOS IS-04 / AoIP discovery in ward-beck-audio-tab.py
 //! (NMOS_REGISTRY, DANTE_REGISTRY, RAVENNA_REGISTRY, AOIP_TELEMETRY, nmos_discovery_loop).
 
