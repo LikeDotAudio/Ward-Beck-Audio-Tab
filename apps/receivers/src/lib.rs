@@ -376,7 +376,7 @@ struct MxlReader {
     restarts: u64,
 }
 
-const MXL_GONE: &str = "writer gone: the flow left /dev/shm/mxl; resumes when it is back";
+const MXL_GONE: &str = "writer gone: the flow left MXL shared memory; resumes when it is back";
 const MXL_STOPPED: &str = "writer stopped: its write head has not moved for over 1 s; resumes when it moves";
 
 impl MxlReader {
@@ -740,7 +740,7 @@ impl TestPoint {
         let mxl = wbs_plugin::services::mxl();
         let flow = mxl
             .flow_info(&self.reference)
-            .ok_or_else(|| PyErr::lookup(format!("MXL flow {} is not in /dev/shm/mxl", self.reference)))?;
+            .ok_or_else(|| PyErr::lookup(format!("MXL flow {} is not in any MXL domain", self.reference)))?;
         if flow.buffer_length == 0 || flow.sample_rate == 0 {
             return Err(PyErr { class: "ZeroDivisionError", msg: "integer modulo by zero".into() });
         }
