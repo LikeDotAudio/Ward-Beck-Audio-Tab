@@ -15,7 +15,7 @@ FROM rust:1-slim-bookworm AS build
 WORKDIR /src
 # The crate depends on Generators/rust (path dependency, crate wbs-generators),
 # whose license-file is Generators/LICENSE.
-# Build context is the repo root: the workspace (host, plugin, apps, utils) and its two submodule crates.
+# Build context is the repo root: the workspace (host, plugin, apps, utils) and its submodule crates.
 COPY Cargo.toml Cargo.lock LICENSE ./
 COPY Generators/LICENSE ./Generators/LICENSE
 COPY Generators/rust ./Generators/rust
@@ -25,6 +25,12 @@ COPY host ./host
 COPY plugin ./plugin
 COPY apps ./apps
 COPY utils ./utils
+# The module plugins the inserts app links (submodules modules/<Mxxx>, crate in SOFTWARE/plugin).
+COPY modules/M462/SOFTWARE/plugin ./modules/M462/SOFTWARE/plugin
+COPY modules/M462A/SOFTWARE/plugin ./modules/M462A/SOFTWARE/plugin
+COPY modules/M462B/SOFTWARE/plugin ./modules/M462B/SOFTWARE/plugin
+COPY modules/M466/SOFTWARE/plugin ./modules/M466/SOFTWARE/plugin
+COPY modules/M467/SOFTWARE/plugin ./modules/M467/SOFTWARE/plugin
 RUN cargo build --release --locked \
  && strip target/release/ward-beck-audio-tab
 
