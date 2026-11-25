@@ -4,6 +4,10 @@
 //! CBC/Radio-Canada MXL hands-on stack (docker-compose.mxl-demo.yml). The site can only
 //! reach this daemon (:8467, CORS + Private Network Access), so every CBC service is
 //! probed here and its JSON API is proxied through /api/cbc/svc/<name>/<path>.
+//!
+//! GET /CBC (or /cbc) is the test set in one page (web/cbc.html, built in): run state
+//! with START / STOP, patterns, output level, flow ids, and each service in a tab.
+//! GET /api/cbc lists the endpoints.
 
 // Plugged into the host: routes, services and start-up (plugin.rs).
 pub mod plugin;
@@ -23,6 +27,27 @@ pub const CBC_SERVICES: [(&str, u16, &str); 4] = [
     ("webrtc", 9601, "WebRTC Receiver"),
     ("info", 9699, "MXL Info GUI"),
 ];
+
+/// The test set's page (GET /CBC), driven only by the /api/cbc routes.
+pub const CBC_HTML: &str = include_str!("../web/cbc.html");
+
+/// GET /api/cbc: the endpoints and services, so the API can be found.
+pub fn api_index() -> Value {
+    let ep = |method: &str, path: &str, body: Value, what: &str| json!({"method": method, "path": path, "body": body, "what": what});
+    json!({
+        "page": "/CBC",
+        "endpoints": [
+            ep("GET", "/api/cbc/status", Value::Null, "online, running, patterns, level_db, flows, services (up / down)"),
+            ep("POST", "/api/cbc/pipeline/start", json!({"service": "generator | player (optional)"}), "start the generator pipeline"),
+            ep("POST", "/api/cbc/pipeline/stop", json!({"service": "generator | player (optional)"}), "stop it"),
+            ep("POST", "/api/cbc/pattern", json!({"target": "video | audio", "pattern": "<name from status.patterns>"}), "set a test pattern"),
+            ep("POST", "/api/cbc/audio_level", json!({"level_db": -20}), "output level, dBFS"),
+            ep("GET", "/api/cbc/svc/<service>/<path>", Value::Null, "pass-through GET to a service API"),
+            ep("POST", "/api/cbc/svc/<service>/<path>", json!({}), "pass-through POST to a service API"),
+        ],
+        "services": CBC_SERVICES.iter().map(|(name, port, label)| json!({"name": name, "port": port, "label": label})).collect::<Vec<_>>(),
+    })
+}
 
 fn st() -> MutexGuard<'static, Map<String, Value>> {
     static STATE: OnceLock<Mutex<Map<String, Value>>> = OnceLock::new();

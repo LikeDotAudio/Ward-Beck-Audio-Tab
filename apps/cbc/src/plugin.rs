@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
-//! The CBC test set plugs in its proxy routes and offers its state and HTTP helpers.
+//! The CBC test set plugs in its proxy routes, its page (/CBC) and its endpoint index
+//! (/api/cbc), and offers its state and HTTP helpers.
 
 use serde_json::{json, Map, Value};
 use wbs_plugin::reply::{loads, loads_obj};
@@ -27,6 +28,12 @@ impl Plugin for Cbc {
     }
 
     fn get(&self, path: &str, query: &str) -> Option<RouteResult> {
+        if is_page(path) {
+            return Some(Ok(Reply::Html(crate::CBC_HTML)));
+        }
+        if path == "/api/cbc" || path == "/api/cbc/" {
+            return Some(Ok(json_reply(&crate::api_index())));
+        }
         if path == "/api/cbc/status" {
             return Some(Ok(json_reply(&crate::state())));
         }
@@ -47,6 +54,11 @@ impl Plugin for Cbc {
             || path.starts_with("/api/cbc/svc/");
         ours.then(|| post(path, body))
     }
+}
+
+/// The test set's page: /CBC or /cbc (with or without the trailing slash).
+fn is_page(path: &str) -> bool {
+    matches!(path.trim_end_matches('/'), "/CBC" | "/cbc")
 }
 
 fn post(path: &str, body: &str) -> RouteResult {
@@ -132,4 +144,44 @@ impl services::Cbc for Cbc {
 pub fn plug() {
     wbs_plugin::register(&Cbc);
     services::provide_cbc(Box::new(Cbc));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn html(path: &str) -> bool {
+        matches!(Cbc.get(path, ""), Some(Ok(Reply::Html(h))) if h.contains("<title>CBC MXL Test Set</title>"))
+    }
+
+    #[test]
+    fn page_routes() {
+        assert!(html("/CBC"));
+        assert!(html("/cbc"));
+        assert!(html("/CBC/"));
+        assert!(Cbc.get("/Cbc", "").is_none());
+        assert!(Cbc.get("/cbcx", "").is_none());
+        assert!(Cbc.post("/CBC", "").is_none());
+    }
+
+    #[test]
+    fn api_index_route() {
+        let Some(Ok(Reply::Json(200, body))) = Cbc.get("/api/cbc", "") else { panic!("no index") };
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["page"], "/CBC");
+        let paths: Vec<&str> = v["endpoints"].as_array().unwrap().iter().map(|e| e["path"].as_str().unwrap()).collect();
+        for p in ["/api/cbc/status", "/api/cbc/pattern", "/api/cbc/audio_level", "/api/cbc/pipeline/start", "/api/cbc/pipeline/stop"] {
+            assert!(paths.contains(&p), "{p}");
+        }
+        assert_eq!(v["services"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn page_uses_only_the_api() {
+        let h = crate::CBC_HTML;
+        for p in ["/api/cbc/status", "/api/cbc/pattern", "/api/cbc/audio_level", "/api/cbc/pipeline/start", "/api/cbc/pipeline/stop"] {
+            assert!(h.contains(p), "{p}");
+        }
+        assert!(!h.contains("src=\"http") && !h.contains("href=\"http"), "no external assets");
+    }
 }

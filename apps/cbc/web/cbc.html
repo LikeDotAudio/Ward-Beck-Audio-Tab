@@ -1,0 +1,207 @@
+<!doctype html>
+<!-- Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved. -->
+<!-- The CBC / Radio-Canada MXL test set in one page, served by the TAP at /CBC. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CBC MXL Test Set</title>
+<style>
+  :root { --bg:#c0c0c0; --face:#d4d0c8; --hi:#fff; --lo:#808080; --ink:#000; --link:#00e; --on:#0c0; --off:#600; --well:#fff; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:8px; background:var(--bg); color:var(--ink); font:13px/1.35 "MS Sans Serif",Tahoma,Verdana,sans-serif; }
+  h1 { font-size:16px; margin:0 0 6px; }
+  fieldset { border:2px groove var(--face); margin:0 0 8px; padding:6px 8px; background:var(--face); }
+  legend { font-weight:bold; padding:0 4px; }
+  .row { display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center; }
+  button, select { font:inherit; background:var(--face); color:var(--ink); border:2px outset var(--hi); padding:2px 8px; cursor:pointer; }
+  button:active, button.on { border-style:inset; }
+  button.on { background:#b8b4ac; font-weight:bold; }
+  button:disabled, select:disabled { color:var(--lo); cursor:default; }
+  code { background:var(--well); border:2px inset var(--hi); padding:1px 4px; font:12px "Courier New",monospace; word-break:break-all; }
+  .led { display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--off); border:1px solid #000; vertical-align:-1px; margin-right:4px; }
+  .led.up { background:var(--on); box-shadow:0 0 4px var(--on); }
+  .tabs { display:flex; flex-wrap:wrap; gap:2px; margin-bottom:-2px; position:relative; }
+  .tabs button { border-bottom:none; }
+  .tabs button.on { background:var(--face); font-weight:bold; border-style:outset; padding-bottom:4px; }
+  .panel { border:2px outset var(--hi); background:var(--face); padding:6px; }
+  .panel .bar { display:flex; gap:10px; align-items:center; margin-bottom:4px; }
+  iframe { width:100%; height:70vh; min-height:320px; border:2px inset var(--hi); background:var(--well); display:block; }
+  .down { display:flex; align-items:center; justify-content:center; height:200px; border:2px inset var(--hi); background:var(--well); color:var(--lo); }
+  #msg { color:#800; min-height:1.3em; }
+  a { color:var(--link); }
+  table { border-collapse:collapse; }
+  td { padding:2px 6px 2px 0; vertical-align:middle; }
+</style>
+</head>
+<body>
+<h1>CBC / Radio-Canada MXL Test Set</h1>
+
+<fieldset>
+  <legend>Generator</legend>
+  <div class="row">
+    <span><span class="led" id="led-run"></span><b id="run-text">offline</b></span>
+    <button id="startstop" disabled>START</button>
+    <label>Video <select id="video" disabled></select></label>
+    <label>Audio <select id="audio" disabled></select></label>
+    <span>Level
+      <button class="lvl" data-db="-20">-20</button><button class="lvl" data-db="-18">-18</button><button class="lvl" data-db="-12">-12</button><button class="lvl" data-db="0">0</button> dBFS
+    </span>
+  </div>
+  <div id="msg"></div>
+</fieldset>
+
+<fieldset>
+  <legend>Flows</legend>
+  <table id="flows"></table>
+</fieldset>
+
+<div class="tabs" id="tabs"></div>
+<div class="panel" id="panel"></div>
+
+<script>
+"use strict";
+// Services in tab order; status.services fills in up / down.
+const SERVICES = [
+  { name: "generator", label: "Generator", port: 9600 },
+  { name: "webrtc", label: "WebRTC", port: 9601 },
+  { name: "player", label: "File Player", port: 9602 },
+  { name: "info", label: "MXL Info", port: 9699 },
+];
+const FLOW_KEYS = ["video", "audio1", "audio2"];
+const $ = (id) => document.getElementById(id);
+let st = null, tab = "generator", shownUrl = "", shownUp = null;
+
+const svcUrl = (s) => location.protocol + "//" + (location.hostname || "localhost") + ":" + s.port + "/";
+const say = (t) => { $("msg").textContent = t || ""; };
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  const r = await fetch(path, opt);
+  const text = await r.text();
+  let j = null;
+  try { j = JSON.parse(text); } catch (e) { /* not JSON */ }
+  if (!r.ok) throw new Error((j && (j.error || j.detail)) || ("HTTP " + r.status));
+  return j;
+}
+
+// A pattern entry may be a plain string or an object with a name.
+const patName = (p) => typeof p === "string" ? p : (p && (p.name || p.id || p.label)) || String(p);
+
+function fillSelect(sel, list, current, online) {
+  const names = (Array.isArray(list) ? list : []).map(patName);
+  if (current && !names.includes(current)) names.unshift(current);
+  const key = names.join("\n");
+  if (sel.dataset.key !== key) {
+    sel.innerHTML = "";
+    for (const n of names) { const o = document.createElement("option"); o.value = o.textContent = n; sel.appendChild(o); }
+    sel.dataset.key = key;
+  }
+  if (document.activeElement !== sel) sel.value = current || "";
+  sel.disabled = !online || names.length === 0;
+}
+
+function renderFlows(flows) {
+  const t = $("flows");
+  const keys = FLOW_KEYS.concat(Object.keys(flows || {}).filter((k) => !FLOW_KEYS.includes(k)));
+  t.innerHTML = "";
+  for (const k of keys) {
+    const id = flows && flows[k];
+    const tr = t.insertRow();
+    tr.insertCell().textContent = k;
+    const c = tr.insertCell();
+    if (id) {
+      const code = document.createElement("code"); code.textContent = typeof id === "string" ? id : JSON.stringify(id); c.appendChild(code);
+      const b = document.createElement("button"); b.textContent = "copy";
+      b.onclick = () => copy(code.textContent, b);
+      tr.insertCell().appendChild(b);
+    } else {
+      c.textContent = "—";
+    }
+  }
+}
+
+async function copy(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch (e) {
+    const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); } catch (e2) { /* nothing else to try */ }
+    ta.remove();
+  }
+  btn.textContent = "copied"; setTimeout(() => { btn.textContent = "copy"; }, 1200);
+}
+
+const svcUp = (name) => !!(st && st.services && st.services[name] && st.services[name].up);
+
+function renderTabs() {
+  const bar = $("tabs");
+  bar.innerHTML = "";
+  for (const s of SERVICES) {
+    const b = document.createElement("button");
+    b.className = s.name === tab ? "on" : "";
+    b.innerHTML = '<span class="led' + (svcUp(s.name) ? " up" : "") + '"></span>';
+    b.appendChild(document.createTextNode(s.label));
+    b.onclick = () => { tab = s.name; renderTabs(); renderPanel(); };
+    bar.appendChild(b);
+  }
+}
+
+function renderPanel() {
+  const s = SERVICES.find((x) => x.name === tab);
+  const url = svcUrl(s), up = svcUp(s.name);
+  if (url === shownUrl && up === shownUp) return; // keep the iframe as it is
+  shownUrl = url; shownUp = up;
+  const p = $("panel");
+  p.innerHTML = "";
+  const bar = document.createElement("div"); bar.className = "bar";
+  bar.innerHTML = '<span><span class="led' + (up ? " up" : "") + '"></span>' + s.label + " :" + s.port + " " + (up ? "up" : "down") + "</span>";
+  const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener"; a.textContent = "open"; bar.appendChild(a);
+  p.appendChild(bar);
+  if (up) {
+    const f = document.createElement("iframe"); f.src = url; f.title = s.label; p.appendChild(f);
+  } else {
+    const d = document.createElement("div"); d.className = "down"; d.textContent = s.label + " is down (container not running)"; p.appendChild(d);
+  }
+}
+
+function render() {
+  const online = !!(st && st.online), running = !!(st && st.running);
+  $("led-run").className = "led" + (running ? " up" : "");
+  $("run-text").textContent = !online ? "offline" : running ? "running" : "stopped";
+  const ss = $("startstop");
+  ss.textContent = running ? "STOP" : "START"; ss.disabled = !online; ss.className = running ? "on" : "";
+  const pats = (st && st.patterns) || {};
+  fillSelect($("video"), pats.video, st && st.video_pattern, online);
+  fillSelect($("audio"), pats.audio, st && st.audio_pattern, online);
+  for (const b of document.querySelectorAll(".lvl")) {
+    b.disabled = !online;
+    b.className = "lvl" + (st && Number(st.level_db) === Number(b.dataset.db) ? " on" : "");
+  }
+  renderFlows(st && st.flows);
+  renderTabs();
+  renderPanel();
+}
+
+async function poll() {
+  try { st = await api("/api/cbc/status"); }
+  catch (e) { st = null; say("TAP unreachable: " + e.message); }
+  render();
+}
+
+async function act(path, body) {
+  say("");
+  try { await api(path, body); } catch (e) { say(path + ": " + e.message); }
+  poll();
+}
+
+$("startstop").onclick = () => act(st && st.running ? "/api/cbc/pipeline/stop" : "/api/cbc/pipeline/start", {});
+$("video").onchange = (e) => act("/api/cbc/pattern", { target: "video", pattern: e.target.value });
+$("audio").onchange = (e) => act("/api/cbc/pattern", { target: "audio", pattern: e.target.value });
+for (const b of document.querySelectorAll(".lvl")) b.onclick = () => act("/api/cbc/audio_level", { level_db: Number(b.dataset.db) });
+
+render();
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>
