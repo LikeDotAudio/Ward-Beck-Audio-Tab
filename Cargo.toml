@@ -27,6 +27,8 @@ serde_json = { version = "1", features = ["preserve_order"] }
 tiny_http = "0.12"
 memmap2 = "0.9"
 socket2 = { version = "0.5", features = ["all"] }
+# Bonjour (DNS-SD) for the AES67 transmitters: pure Rust, Linux / Windows / macOS.
+mdns-sd = { version = "0.20.3", default-features = false }
 libc = "0.2"
 signal-hook = "0.3"
 ureq = { version = "2", default-features = false }

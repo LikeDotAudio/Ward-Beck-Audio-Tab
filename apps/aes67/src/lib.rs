@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.ca). All rights reserved.
-//! AES67 transmitters: one per MXL flow this engine writes (Master Bus, POD-33,
-//! ABS-1 Bit Spitter). Each reads its flow's ring behind the write head and sends
+//! AES67 transmitters: one per engine MXL flow, the router's MXL67-1 … 4 (Repeater,
+//! POD-33 1 kHz, POD-33 400 / 100 Hz, Bit Spitter). Each reads its flow's ring behind the write head and sends
 //! RTP L24 / 48 kHz / 1 ms packets to its own multicast group, announced by SAP/SDP
 //! (RFC 2974 / RFC 4566) the way AES67, RAVENNA and Dante (AES67 mode) expect.
 //!
@@ -10,9 +10,17 @@
 //!   clock     RTP timestamp starts on the TAI media clock (mediaclk:direct=0, ts-refclk
 //!             traceable); the send rate then follows the flow's writer (rate servo)
 //!   SAP       239.255.255.255:9875 every 30 s while running, deletion on stop
+//!   Bonjour   RAVENNA style: _rtsp._tcp.local. with subtype _ravenna_session, one record
+//!             per running transmitter, pointing at a small RTSP responder (OPTIONS and
+//!             DESCRIBE of rtsp://host:port/by-name/<name> or /by-id/<1-4>) on TCP
+//!             WBS_AES67_RTSP_PORT (9010). No port, no Bonjour: SAP carries on alone.
+//!   name      each transmitter has a name (default: the flow's short label), the SDP's s=.
+//!             Renaming bumps the SDP version (o=), withdraws the old SAP announcement,
+//!             announces the new one at once and re-registers the Bonjour record.
 //!
 //! Transmitters are off until asked for (POST /api/aes67, or WBS_AES67=all at start).
-//! WBS_DRY_RUN=1 builds packets but never opens a socket (unless WBS_AES67_TTL=0: host-only).
+//! WBS_DRY_RUN=1 builds packets but never opens a socket (unless WBS_AES67_TTL=0: host-only),
+//! and then runs no mDNS and no RTSP either.
 
 // Plugged into the host: routes, services and start-up (plugin.rs).
 pub mod plugin;
@@ -21,9 +29,11 @@ pub use plugin::plug;
 use wbs_common::current_tai_ns;
 use wbs_plugin::services;
 use serde_json::{json, Value};
+use mdns_sd::{ServiceDaemon, ServiceInfo};
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use std::collections::VecDeque;
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::io::{BufRead, BufReader, Write};
+use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
@@ -39,6 +49,13 @@ const SAP_INTERVAL: Duration = Duration::from_secs(30);
 const PREROLL_FRAMES: usize = 1920; // 40 ms
 /// Queue above this is trimmed back to the pre-roll (the source clock ran fast).
 const MAX_QUEUE_FRAMES: usize = 9600; // 200 ms
+/// The engine flows that transmit, in the router's order (MXL67-1 … 4 = groups .1 … .4).
+/// Other flows (the 8-channel Bit Spitter, the multichannel test flows) do not.
+pub const ENGINE_FLOWS: [&str; 4] =
+    ["wbs-flow-master-stereo", "wbs-flow-ref-tone", "wbs-flow-ref-tone-low", "wbs-flow-bit-spitter"];
+/// RAVENNA's Bonjour type: _rtsp._tcp with the _ravenna_session subtype.
+const MDNS_TYPE: &str = "_ravenna_session._sub._rtsp._tcp.local.";
+const NAME_MAX: usize = 64;
 
 fn env_u(key: &str, default: u64) -> u64 {
     std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default)
@@ -46,6 +63,10 @@ fn env_u(key: &str, default: u64) -> u64 {
 
 pub fn port() -> u16 {
     env_u("WBS_AES67_PORT", 5004) as u16
+}
+
+pub fn rtsp_port() -> u16 {
+    env_u("WBS_AES67_RTSP_PORT", 9010) as u16
 }
 
 pub fn ttl() -> u32 {
@@ -78,18 +99,42 @@ fn fnv(s: &str) -> u32 {
     s.bytes().fold(0x811c_9dc5u32, |h, b| (h ^ b as u32).wrapping_mul(0x0100_0193))
 }
 
+/// SAP message id hash: the flow's hash with the version folded in, so a renamed
+/// transmitter is a new announcement (odd multiplier: every version differs mod 2^16).
+fn msg_hash(flow_id: &str, version: u32) -> u16 {
+    ((fnv(flow_id) ^ version.wrapping_mul(0x9e37_79b1)) & 0xffff) as u16
+}
+
+/// A transmitter name as asked for: trimmed, no control characters, at most 64
+/// characters. None (empty) means back to the default.
+pub fn sanitize_name(raw: &str) -> Option<String> {
+    let clean: String = raw.chars().filter(|c| !c.is_control()).collect();
+    let name: String = clean.trim().chars().take(NAME_MAX).collect();
+    let name = name.trim_end().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
 /// SDP (RFC 4566 + AES67 / RFC 7273 clock attributes) for one transmitter.
 pub use wbs_net::refclk;
 
-pub fn sdp(flow_id: &str, label: &str, group: Ipv4Addr, channels: usize, sample_rate: u32, refclk: &str) -> String {
+#[allow(clippy::too_many_arguments)]
+pub fn sdp(
+    flow_id: &str,
+    name: &str,
+    version: u32,
+    group: Ipv4Addr,
+    channels: usize,
+    sample_rate: u32,
+    refclk: &str,
+) -> String {
     let host = host_v4();
     let sess = fnv(flow_id);
     let (port, ttl) = (port(), ttl());
     format!(
         "v=0\r\n\
-         o=- {sess} 0 IN IP4 {host}\r\n\
-         s={label} (Ward-Beck AES67)\r\n\
-         i=MXL flow {flow_id}\r\n\
+         o=- {sess} {version} IN IP4 {host}\r\n\
+         s={name}\r\n\
+         i=Ward-Beck AES67 · MXL flow {flow_id}\r\n\
          c=IN IP4 {group}/{ttl}\r\n\
          t=0 0\r\n\
          a=recvonly\r\n\
@@ -104,11 +149,11 @@ pub fn sdp(flow_id: &str, label: &str, group: Ipv4Addr, channels: usize, sample_
 }
 
 /// SAP packet (RFC 2974): v1, IPv4 origin, no auth, application/sdp payload.
-pub fn sap_packet(flow_id: &str, sdp: &str, delete: bool) -> Vec<u8> {
+pub fn sap_packet(flow_id: &str, version: u32, sdp: &str, delete: bool) -> Vec<u8> {
     let mut p = Vec::with_capacity(24 + sdp.len());
     p.push(if delete { 0x24 } else { 0x20 }); // V=1, A=0, R=0, T=delete, E=0, C=0
     p.push(0); // auth length
-    p.extend_from_slice(&((fnv(flow_id) & 0xffff) as u16).to_be_bytes());
+    p.extend_from_slice(&msg_hash(flow_id, version).to_be_bytes());
     p.extend_from_slice(&host_v4().octets());
     p.extend_from_slice(b"application/sdp\0");
     p.extend_from_slice(sdp.as_bytes());
@@ -149,6 +194,12 @@ fn multicast_socket() -> std::io::Result<Socket> {
 struct Tx {
     flow_id: String,
     label: String,
+    /// The SDP's s= (and the Bonjour instance name); label until renamed.
+    name: String,
+    /// SDP o= version: bumps on every rename.
+    version: u32,
+    /// Bonjour full name while registered.
+    mdns: Option<String>,
     group: Ipv4Addr,
     channels: usize,
     sample_rate: u32,
@@ -164,7 +215,7 @@ struct Tx {
 
 impl Tx {
     fn sdp(&self) -> String {
-        sdp(&self.flow_id, &self.label, self.group, self.channels, self.sample_rate, &refclk(services::aoip().ptp_leader()))
+        sdp(&self.flow_id, &self.name, self.version, self.group, self.channels, self.sample_rate, &refclk(services::aoip().ptp_leader()))
     }
 
     fn json(&self) -> Value {
@@ -172,6 +223,8 @@ impl Tx {
         json!({
             "flow_id": self.flow_id,
             "label": self.label,
+            "name": self.name,
+            "version": self.version,
             "running": on,
             "multicast_ip": self.group.to_string(),
             "port": port(),
@@ -203,15 +256,16 @@ fn state() -> &'static Mutex<State> {
     static S: OnceLock<Mutex<State>> = OnceLock::new();
     S.get_or_init(|| {
         let mxl = services::mxl();
-        let txs = mxl
-            .flow_ids()
+        let txs = ENGINE_FLOWS
             .iter()
             .enumerate()
             .filter_map(|(i, id)| mxl.flow_info(id).map(|f| (i, f)))
             .map(|(index, f)| Tx {
-
                 flow_id: f.flow_id.clone(),
                 label: short_label(&f.label),
+                name: short_label(&f.label),
+                version: 0,
+                mdns: None,
                 group: group_for(index),
                 channels: f.channel_count,
                 sample_rate: f.sample_rate,
@@ -244,6 +298,8 @@ pub fn status() -> Value {
         "ptp_leader": leader.map(|(gm, domain)| json!({"identity": gm.to_uppercase().replace(':', "-"), "domain": domain})),
         "sap_group": format!("{SAP_GROUP}:{SAP_PORT}"),
         "dry_run": dry_run(),
+        // The RTSP responder Bonjour points at, or null: not started yet, dry run or no port.
+        "rtsp_port": RTSP.get().copied().flatten(),
         "transmitters": st.txs.iter().map(|t| t.json()).collect::<Vec<_>>(),
     })
 }
@@ -374,13 +430,13 @@ fn sender(
     }
 }
 
-fn send_sap(flow_id: &str, sdp: &str, delete: bool) {
+fn send_sap(flow_id: &str, version: u32, sdp: &str, delete: bool) {
     if dry_run() {
         return;
     }
     if let Ok(s) = multicast_socket() {
         let dest = SockAddr::from(SocketAddrV4::new(SAP_GROUP, SAP_PORT));
-        let _ = s.send_to(&sap_packet(flow_id, sdp, delete), &dest);
+        let _ = s.send_to(&sap_packet(flow_id, version, sdp, delete), &dest);
     }
 }
 
@@ -390,15 +446,19 @@ fn ensure_sap_thread(st: &mut State) {
         return;
     }
     st.sap_thread = Some(std::thread::spawn(|| loop {
-        let live: Vec<(String, String)> = {
+        let live: Vec<(String, u32, String)> = {
             let st = state().lock().unwrap();
-            st.txs.iter().filter(|t| t.running.load(Ordering::Acquire)).map(|t| (t.flow_id.clone(), t.sdp())).collect()
+            st.txs
+                .iter()
+                .filter(|t| t.running.load(Ordering::Acquire))
+                .map(|t| (t.flow_id.clone(), t.version, t.sdp()))
+                .collect()
         };
         if live.is_empty() || wbs_common::is_shutting_down() {
             return;
         }
-        for (id, sdp) in &live {
-            send_sap(id, sdp, false);
+        for (id, v, sdp) in &live {
+            send_sap(id, *v, sdp, false);
         }
         let until = Instant::now() + SAP_INTERVAL;
         while Instant::now() < until {
@@ -430,6 +490,7 @@ fn start_tx(st: &mut State, i: usize) {
         (t.running.clone(), t.packets.clone(), t.underruns.clone(), t.trims.clone(), t.rate.clone(), t.error.clone());
     t.thread = Some(std::thread::spawn(move || sender(id, g, sr, r, p, u, tr, ra, e)));
     println!("[AES67] TX {} -> {}:{} (L24/{}/{} 1 ms)", t.flow_id, t.group, port(), t.sample_rate, t.channels);
+    bonjour_register(t, i);
     ensure_sap_thread(st);
 }
 
@@ -440,15 +501,50 @@ fn stop_tx(st: &mut State, i: usize) -> bool {
         let _ = h.join();
     }
     t.started_at = None;
+    bonjour_unregister(t);
     if was {
-        send_sap(&t.flow_id, &t.sdp(), true);
+        send_sap(&t.flow_id, t.version, &t.sdp(), true);
         println!("[AES67] TX {} stopped", t.flow_id);
     }
     was
 }
 
-/// POST /api/aes67  {"flow_id": "...", "enabled": true|false}  or  {"all": true|false}.
-/// Without "enabled" the named transmitter toggles.
+/// Renames transmitter `i` (None: back to the default). A real change bumps the version;
+/// a running transmitter withdraws its old SAP announcement, announces the new one now
+/// and re-registers on Bonjour.
+fn rename_tx(st: &mut State, i: usize, name: Option<String>) {
+    let t = &mut st.txs[i];
+    let name = name.unwrap_or_else(|| t.label.clone());
+    if name == t.name {
+        return;
+    }
+    let on = t.running.load(Ordering::Acquire);
+    if on {
+        send_sap(&t.flow_id, t.version, &t.sdp(), true);
+        bonjour_unregister(t);
+    }
+    println!("[AES67] TX {} renamed {:?} -> {:?}", t.flow_id, t.name, name);
+    t.name = name;
+    t.version = t.version.wrapping_add(1);
+    if on {
+        send_sap(&t.flow_id, t.version, &t.sdp(), false);
+        bonjour_register(t, i);
+    }
+}
+
+/// On / off a POST asks for: "enabled" if given, nothing for a rename alone (the console
+/// renames on every routing change), else a toggle (a body with just flow_id).
+fn wanted_on(enabled: Option<bool>, has_name: bool, running: bool) -> Option<bool> {
+    match enabled {
+        Some(b) => Some(b),
+        None if has_name => None,
+        None => Some(!running),
+    }
+}
+
+/// POST /api/aes67  {"flow_id": "...", "enabled": true|false, "name": "..."}  or
+/// {"all": true|false}. With neither "enabled" nor "name" the named transmitter toggles;
+/// an empty (or null) name goes back to the default.
 pub fn control(body: &serde_json::Map<String, Value>) -> Result<Value, String> {
     {
         let mut st = state().lock().unwrap();
@@ -463,21 +559,30 @@ pub fn control(body: &serde_json::Map<String, Value>) -> Result<Value, String> {
         } else {
             let id = body.get("flow_id").and_then(|v| v.as_str()).ok_or("flow_id or all required")?;
             let i = st.txs.iter().position(|t| t.flow_id == id).ok_or_else(|| format!("unknown flow {id}"))?;
-            let on = match body.get("enabled").and_then(|v| v.as_bool()) {
-                Some(b) => b,
-                None => !st.txs[i].running.load(Ordering::Acquire),
+            let name = match body.get("name") {
+                None => None,
+                Some(Value::Null) => Some(None),
+                Some(Value::String(s)) => Some(sanitize_name(s)),
+                Some(_) => return Err("name must be a string".into()),
             };
-            if on {
-                start_tx(&mut st, i);
-            } else {
-                stop_tx(&mut st, i);
+            let on = wanted_on(body.get("enabled").and_then(|v| v.as_bool()), name.is_some(), st.txs[i].running.load(Ordering::Acquire));
+            if let Some(n) = name {
+                rename_tx(&mut st, i, n);
+            }
+            match on {
+                Some(true) => start_tx(&mut st, i),
+                Some(false) => {
+                    stop_tx(&mut st, i);
+                }
+                None => {}
             }
         }
     }
     Ok(status())
 }
 
-/// Stops every transmitter and sends SAP deletions. Returns the labels that were live.
+/// Stops every transmitter, sends SAP deletions and withdraws the Bonjour records.
+/// Returns the labels that were live.
 pub fn stop_all() -> Vec<String> {
     let mut st = state().lock().unwrap();
     let mut out = Vec::new();
@@ -487,6 +592,248 @@ pub fn stop_all() -> Vec<String> {
         }
     }
     out
+}
+
+// ---- Bonjour (RAVENNA) and the RTSP responder it points at ----
+
+/// The mDNS responder, started with the first transmitter (None: dry run or no RTSP).
+fn mdns() -> Option<&'static ServiceDaemon> {
+    static D: OnceLock<Option<ServiceDaemon>> = OnceLock::new();
+    D.get_or_init(|| {
+        if dry_run() || rtsp_listening().is_none() {
+            return None;
+        }
+        match ServiceDaemon::new() {
+            Ok(d) => Some(d),
+            Err(e) => {
+                wbs_log::warn("AES67", &format!("Bonjour off: mDNS responder: {e}"));
+                None
+            }
+        }
+    })
+    .as_ref()
+}
+
+static RTSP: OnceLock<Option<u16>> = OnceLock::new();
+
+/// The RTSP responder's port, binding it on first use (None: dry run or it can't bind).
+fn rtsp_listening() -> Option<u16> {
+    *RTSP.get_or_init(|| {
+        if dry_run() {
+            return None;
+        }
+        let port = rtsp_port();
+        match TcpListener::bind(("0.0.0.0", port)) {
+            Ok(l) => {
+                std::thread::spawn(move || {
+                    for c in l.incoming().flatten() {
+                        std::thread::spawn(move || rtsp_conn(c));
+                    }
+                });
+                println!("[AES67] RTSP on :{port} (Bonjour {MDNS_TYPE})");
+                Some(port)
+            }
+            Err(e) => {
+                wbs_log::warn("AES67", &format!("Bonjour off: RTSP :{port}: {e}"));
+                None
+            }
+        }
+    })
+}
+
+/// This machine's Bonjour host name: "<hostname>.local.".
+fn mdns_host() -> String {
+    let raw = std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .ok()
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
+        .or_else(|| {
+            std::process::Command::new("hostname").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        })
+        .unwrap_or_default();
+    let h: String = raw
+        .trim()
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let h = h.trim_matches('-');
+    format!("{}.local.", if h.is_empty() { "ward-beck-tap" } else { h })
+}
+
+fn bonjour_register(t: &mut Tx, i: usize) {
+    let (Some(d), Some(port)) = (mdns(), rtsp_listening()) else { return };
+    bonjour_unregister(t);
+    let props = [("id", (i + 1).to_string()), ("flow", t.flow_id.clone())];
+    match ServiceInfo::new(MDNS_TYPE, &t.name, &mdns_host(), host_v4().to_string(), port, &props[..]) {
+        Ok(info) => {
+            let full = info.get_fullname().to_string();
+            match d.register(info) {
+                Ok(()) => t.mdns = Some(full),
+                Err(e) => wbs_log::warn("AES67", &format!("Bonjour {}: {e}", t.name)),
+            }
+        }
+        Err(e) => wbs_log::warn("AES67", &format!("Bonjour {}: {e}", t.name)),
+    }
+}
+
+fn bonjour_unregister(t: &mut Tx) {
+    if let (Some(full), Some(d)) = (t.mdns.take(), mdns()) {
+        // Wait briefly for the goodbye to go out (stop_all runs at shutdown).
+        if let Ok(rx) = d.unregister(&full) {
+            let _ = rx.recv_timeout(Duration::from_millis(500));
+        }
+    }
+}
+
+/// What an RTSP URL asks for.
+#[derive(Debug, PartialEq)]
+pub enum RtspTarget {
+    ByName(String),
+    /// 1-based, the router's MXL67-n.
+    ById(usize),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct RtspRequest {
+    pub method: String,
+    pub url: String,
+    pub cseq: Option<String>,
+}
+
+/// The request line and CSeq of one RTSP request (headers up to the blank line).
+pub fn parse_rtsp_request(text: &str) -> Option<RtspRequest> {
+    let mut lines = text.lines();
+    let mut first = lines.next()?.split_whitespace();
+    let (method, url, ver) = (first.next()?, first.next()?, first.next()?);
+    if !ver.starts_with("RTSP/") {
+        return None;
+    }
+    let cseq = lines
+        .take_while(|l| !l.trim().is_empty())
+        .filter_map(|l| l.split_once(':'))
+        .find(|(k, _)| k.trim().eq_ignore_ascii_case("cseq"))
+        .map(|(_, v)| v.trim().to_string());
+    Some(RtspRequest { method: method.to_ascii_uppercase(), url: url.to_string(), cseq })
+}
+
+fn pct_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = |c: u8| (c as char).to_digit(16);
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// rtsp://host:port/by-name/<url-encoded name> or /by-id/<n> (a bare path works too).
+pub fn rtsp_target(url: &str) -> Option<RtspTarget> {
+    let path = match url.split_once("://") {
+        Some((_, rest)) => rest.find('/').map(|p| &rest[p..]).unwrap_or("/"),
+        None => url,
+    };
+    let path = path.split(['?', '#']).next().unwrap_or("").trim_end_matches('/');
+    if let Some(n) = path.strip_prefix("/by-name/") {
+        let n = pct_decode(n);
+        return (!n.is_empty()).then_some(RtspTarget::ByName(n));
+    }
+    let id: usize = path.strip_prefix("/by-id/")?.parse().ok()?;
+    (id >= 1).then_some(RtspTarget::ById(id))
+}
+
+/// An RTSP/1.0 response; `sdp` makes it an application/sdp body.
+pub fn rtsp_response(code: u16, reason: &str, cseq: Option<&str>, extra: &str, sdp: Option<&str>) -> String {
+    let mut r = format!("RTSP/1.0 {code} {reason}\r\n");
+    if let Some(c) = cseq {
+        r += &format!("CSeq: {c}\r\n");
+    }
+    r += extra;
+    match sdp {
+        Some(b) => r += &format!("Content-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{b}", b.len()),
+        None => r += "Content-Length: 0\r\n\r\n",
+    }
+    r
+}
+
+/// Answers one request; `lookup` gives the SDP of a running transmitter.
+pub fn rtsp_reply(text: &str, lookup: impl Fn(&RtspTarget) -> Option<String>) -> String {
+    let Some(req) = parse_rtsp_request(text) else {
+        return rtsp_response(400, "Bad Request", None, "", None);
+    };
+    let cseq = req.cseq.as_deref();
+    match req.method.as_str() {
+        "OPTIONS" => rtsp_response(200, "OK", cseq, "Public: OPTIONS, DESCRIBE\r\n", None),
+        "DESCRIBE" => match rtsp_target(&req.url).and_then(|t| lookup(&t)) {
+            Some(sdp) => rtsp_response(200, "OK", cseq, &format!("Content-Base: {}/\r\n", req.url.trim_end_matches('/')), Some(&sdp)),
+            None => rtsp_response(404, "Not Found", cseq, "", None),
+        },
+        _ => rtsp_response(404, "Not Found", cseq, "", None),
+    }
+}
+
+/// The SDP of the running transmitter an RTSP URL names.
+fn rtsp_lookup(t: &RtspTarget) -> Option<String> {
+    let st = state().lock().unwrap();
+    let tx = match t {
+        RtspTarget::ById(n) => st.txs.get(n - 1),
+        RtspTarget::ByName(name) => st.txs.iter().find(|x| &x.name == name),
+    }?;
+    tx.running.load(Ordering::Acquire).then(|| tx.sdp())
+}
+
+/// One RTSP client: requests in turn until it hangs up (or goes quiet for 60 s).
+fn rtsp_conn(c: TcpStream) {
+    let _ = c.set_read_timeout(Some(Duration::from_secs(60)));
+    let Ok(mut w) = c.try_clone() else { return };
+    let mut r = BufReader::new(c);
+    loop {
+        let mut req = String::new();
+        loop {
+            let mut line = String::new();
+            match r.read_line(&mut line) {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {}
+            }
+            if line.trim().is_empty() {
+                if req.is_empty() {
+                    continue; // stray blank line between requests
+                }
+                break;
+            }
+            req += &line;
+            if req.len() > 8192 {
+                return;
+            }
+        }
+        // Requests we answer carry no body; skip one if a client sends it anyway.
+        let body = req
+            .lines()
+            .filter_map(|l| l.split_once(':'))
+            .find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length"))
+            .and_then(|(_, v)| v.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        if body > 0 {
+            let mut skip = vec![0u8; body.min(65536)];
+            if std::io::Read::read_exact(&mut r, &mut skip).is_err() {
+                return;
+            }
+        }
+        if w.write_all(rtsp_reply(&req, rtsp_lookup).as_bytes()).is_err() {
+            return;
+        }
+    }
 }
 
 /// WBS_AES67=all (or a comma list of flow ids) starts transmitters at launch.
@@ -521,12 +868,12 @@ mod tests {
 
     #[test]
     fn sap_header() {
-        let p = sap_packet("f", "v=0\r\n", false);
+        let p = sap_packet("f", 0, "v=0\r\n", false);
         assert_eq!(p[0], 0x20);
         assert_eq!(p[1], 0);
         assert!(p.windows(16).any(|w| w == b"application/sdp\0"));
-        assert_eq!(sap_packet("f", "", true)[0], 0x24);
-        let parsed = wbs_aoip::parse_sap(&sap_packet("f", &sdp("f", "Master", Ipv4Addr::new(239, 69, 1, 1), 2, 48000, &refclk(None)), false)).unwrap();
+        assert_eq!(sap_packet("f", 0, "", true)[0], 0x24);
+        let parsed = wbs_aoip::parse_sap(&sap_packet("f", 0, &sdp("f", "Master", 0, Ipv4Addr::new(239, 69, 1, 1), 2, 48000, &refclk(None)), false)).unwrap();
         assert_eq!(parsed["sdp"]["multicast_ip"], "239.69.1.1");
         assert_eq!(parsed["sdp"]["port"], 5004);
     }
@@ -534,6 +881,88 @@ mod tests {
     #[test]
     fn labels() {
         assert_eq!(short_label("Ward-Beck Master Bus (Float32 Stereo)"), "Master Bus");
+    }
+
+    #[test]
+    fn sdp_name_and_version() {
+        let s = sdp("wbs-flow-ref-tone", "Studio A Tone", 3, Ipv4Addr::new(239, 69, 1, 2), 2, 48000, &refclk(None));
+        let line = |k: &str| s.lines().find(|l| l.starts_with(k)).unwrap().to_string();
+        assert_eq!(line("s="), "s=Studio A Tone");
+        assert_eq!(line("i="), "i=Ward-Beck AES67 · MXL flow wbs-flow-ref-tone");
+        let o = line("o=");
+        let o: Vec<&str> = o.split(' ').collect();
+        assert_eq!(o[1], fnv("wbs-flow-ref-tone").to_string());
+        assert_eq!(o[2], "3");
+        assert!(s.contains("a=rtpmap:96 L24/48000/2\r\n"));
+    }
+
+    #[test]
+    fn sap_hash_follows_version() {
+        let h = |p: Vec<u8>| u16::from_be_bytes([p[2], p[3]]);
+        let v0 = h(sap_packet("f", 0, "", false));
+        assert_eq!(v0, (fnv("f") & 0xffff) as u16); // version 0: as before
+        let mut seen = std::collections::HashSet::new();
+        for v in 0..1000 {
+            assert!(seen.insert(h(sap_packet("f", v, "", false))));
+        }
+        assert_eq!(h(sap_packet("f", 7, "", true)), h(sap_packet("f", 7, "x", false)));
+    }
+
+    #[test]
+    fn names() {
+        assert_eq!(sanitize_name("  Studio A  "), Some("Studio A".into()));
+        assert_eq!(sanitize_name("Evil\r\ns=Other\r\n"), Some("Evils=Other".into()));
+        assert_eq!(sanitize_name("Tab\there"), Some("Tabhere".into()));
+        assert_eq!(sanitize_name("   "), None);
+        assert_eq!(sanitize_name("\r\n"), None);
+        assert_eq!(sanitize_name(&"é".repeat(100)).unwrap().chars().count(), 64);
+        assert_eq!(sanitize_name(&format!("{} x", "a".repeat(63))), Some("a".repeat(63)));
+    }
+
+    #[test]
+    fn rtsp_parse() {
+        let r = parse_rtsp_request("DESCRIBE rtsp://10.0.0.5:9010/by-name/Studio%20A%20Tone RTSP/1.0\r\ncseq: 7\r\nAccept: application/sdp\r\n\r\n").unwrap();
+        assert_eq!(r.method, "DESCRIBE");
+        assert_eq!(r.cseq.as_deref(), Some("7"));
+        assert_eq!(rtsp_target(&r.url), Some(RtspTarget::ByName("Studio A Tone".into())));
+        assert_eq!(rtsp_target("rtsp://h:9010/by-id/3"), Some(RtspTarget::ById(3)));
+        assert_eq!(rtsp_target("/by-id/2/"), Some(RtspTarget::ById(2)));
+        assert_eq!(rtsp_target("rtsp://h/by-id/0"), None);
+        assert_eq!(rtsp_target("rtsp://h/other"), None);
+        assert_eq!(rtsp_target("rtsp://h/by-name/50%"), Some(RtspTarget::ByName("50%".into())));
+        assert_eq!(parse_rtsp_request("GET / HTTP/1.1\r\n\r\n"), None);
+    }
+
+    #[test]
+    fn rtsp_answers() {
+        let sdp = "v=0\r\ns=Tone\r\n";
+        let look = |t: &RtspTarget| (t == &RtspTarget::ById(2)).then(|| sdp.to_string());
+        let ok = rtsp_reply("DESCRIBE rtsp://h:9010/by-id/2 RTSP/1.0\r\nCSeq: 3\r\n", look);
+        assert!(ok.starts_with("RTSP/1.0 200 OK\r\nCSeq: 3\r\n"));
+        assert!(ok.contains("Content-Type: application/sdp\r\n"));
+        assert!(ok.contains(&format!("Content-Length: {}\r\n", sdp.len())));
+        assert!(ok.ends_with(&format!("\r\n\r\n{sdp}")));
+        let none = rtsp_reply("DESCRIBE rtsp://h:9010/by-id/4 RTSP/1.0\r\nCSeq: 4\r\n", look);
+        assert!(none.starts_with("RTSP/1.0 404 Not Found\r\nCSeq: 4\r\n"));
+        let opt = rtsp_reply("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n", look);
+        assert!(opt.starts_with("RTSP/1.0 200 OK\r\nCSeq: 1\r\n") && opt.contains("Public: OPTIONS, DESCRIBE"));
+        assert!(rtsp_reply("SETUP rtsp://h/by-id/2 RTSP/1.0\r\nCSeq: 5\r\n", look).starts_with("RTSP/1.0 404"));
+    }
+
+    #[test]
+    fn rename_never_toggles() {
+        assert_eq!(wanted_on(None, true, true), None);
+        assert_eq!(wanted_on(None, true, false), None);
+        assert_eq!(wanted_on(None, false, true), Some(false)); // just flow_id: toggle
+        assert_eq!(wanted_on(None, false, false), Some(true));
+        assert_eq!(wanted_on(Some(true), true, false), Some(true));
+        assert_eq!(wanted_on(Some(false), false, true), Some(false));
+    }
+
+    #[test]
+    fn engine_flows_only() {
+        assert_eq!(ENGINE_FLOWS[2], "wbs-flow-ref-tone-low");
+        assert_eq!(group_for(3).octets()[3], 4);
     }
 
     #[test]
