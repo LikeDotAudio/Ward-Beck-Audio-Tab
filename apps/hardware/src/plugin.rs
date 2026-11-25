@@ -14,9 +14,24 @@ impl Plugin for Hardware {
         "hardware"
     }
     fn get(&self, path: &str, _query: &str) -> Option<RouteResult> {
-        (path == "/api/hw").then(|| Ok(json_reply(&crate::status())))
+        match path {
+            "/api/hw" => Some(Ok(json_reply(&crate::status()))),
+            // The system volume (the keyboard's volume keys): the XTM-4 MONITOR knob
+            "/api/system_volume" => Some(Ok(json_reply(&crate::system_volume()))),
+            _ => None,
+        }
     }
     fn post(&self, path: &str, body: &str) -> Option<RouteResult> {
+        if path == "/api/system_volume" {
+            // {"percent": 0-100}
+            return Some(loads(body).map(|data| {
+                let p = data.get("percent").and_then(|v| v.as_f64()).unwrap_or(f64::NAN);
+                match crate::set_system_volume(p) {
+                    Ok(v) => json_reply(&v),
+                    Err(e) => Reply::Json(400, py::dumps(&json!({"error": e})).into_bytes()),
+                }
+            }));
+        }
         if path != "/api/hw" {
             return None;
         }

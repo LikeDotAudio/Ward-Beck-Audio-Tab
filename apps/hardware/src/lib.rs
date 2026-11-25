@@ -73,7 +73,7 @@ pub fn status() -> Value {
             })
         })
         .collect();
-    // Rows: the TAP's two outputs to hardware ("Ward-Beck TAP 5: HW 1 (Speakers)" -> tag "HW 1",
+    // Rows: the TAP's two outputs to hardware ("Ward-Beck TAP: HW 1 (Speakers)" -> tag "HW 1",
     // label "Speakers"), then the hardware inputs.
     let mut sources: Vec<Value> = wbs_plugin::buses::WBS_SINKS
         .iter()
@@ -142,5 +142,46 @@ mod tests {
         assert_eq!(l.len(), 2);
         assert_eq!(l[0], ("7".into(), "wbs_insert_bus.monitor".into(), "alsa_output.x".into(), false));
         assert_eq!(l[1], ("12".into(), "alsa_input.mic".into(), "alsa_output.y".into(), true));
+    }
+}
+
+/// The system volume, what the keyboard's volume keys move: the default output's level (%)
+/// and mute. With the TAP running the default output is its "To Tap" bus.
+pub fn system_volume() -> Value {
+    let vol = run_cmd(&["pactl", "get-sink-volume", "@DEFAULT_SINK@"]).1;
+    let muted = run_cmd(&["pactl", "get-sink-mute", "@DEFAULT_SINK@"]).1.contains("yes");
+    let sink = run_cmd(&["pactl", "get-default-sink"]).1.trim().to_string();
+    json!({"percent": parse_percent(&vol), "muted": muted, "sink": sink})
+}
+
+/// Set the system volume (0-100 %), as the volume keys would: a level above 0 also unmutes.
+pub fn set_system_volume(percent: f64) -> Result<Value, String> {
+    if !percent.is_finite() {
+        return Err("percent must be a number".into());
+    }
+    let p = percent.clamp(0.0, 100.0).round() as i64;
+    run_mut(&["pactl", "set-sink-volume", "@DEFAULT_SINK@", &format!("{p}%")]);
+    if p > 0 {
+        run_mut(&["pactl", "set-sink-mute", "@DEFAULT_SINK@", "0"]);
+    }
+    Ok(system_volume())
+}
+
+/// First "NN%" in pactl's volume line ("Volume: front-left: 45875 /  70% / -9.29 dB, ...").
+pub fn parse_percent(s: &str) -> Option<f64> {
+    let i = s.find('%')?;
+    let digits: String = s[..i].chars().rev().skip_while(|c| c.is_whitespace()).take_while(|c| c.is_ascii_digit()).collect();
+    digits.chars().rev().collect::<String>().parse().ok()
+}
+
+#[cfg(test)]
+mod volume_tests {
+    use super::parse_percent;
+
+    #[test]
+    fn percent() {
+        assert_eq!(parse_percent("Volume: front-left: 45875 /  70% / -9.29 dB,   front-right: 45875 /  70% / -9.29 dB"), Some(70.0));
+        assert_eq!(parse_percent("Volume: mono: 65536 / 100% / 0.00 dB"), Some(100.0));
+        assert_eq!(parse_percent("nothing"), None);
     }
 }
