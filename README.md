@@ -80,7 +80,7 @@ Build from source anywhere: `git submodule update --init Generators PTP && cargo
 > Docker, native Linux packaging and Windows: see **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
 ### Option A: Direct Run
-One native binary, written in Rust. `linux/run.sh` builds it on first use (needs [cargo](https://rustup.rs)). The generators come from the [Ward-Beck Generators](https://github.com/LikeDotAudio/Ward-Beck-Generators) submodule, so clone with `--recursive` (linux/run.sh fetches it if you forgot):
+One native binary, written in Rust. `linux/run.sh` builds it on first use (needs [cargo](https://rustup.rs)). The generators come from the [Ward-Beck Generators](https://github.com/WardBeckSystems/Ward-Beck-Generators) submodule, so clone with `--recursive` (linux/run.sh fetches it if you forgot):
 ```bash
 git clone --recursive https://github.com/WardBeckSystems/Ward-Beck-Audio-Tap.git && cd Ward-Beck-Audio-Tap
 linux/run.sh             # = cargo build --release && target/release/ward-beck-audio-tab

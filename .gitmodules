@@ -3,7 +3,7 @@
 	url = https://github.com/cbcrc/mxl-hands-on
 [submodule "Generators"]
 	path = Generators
-	url = https://github.com/LikeDotAudio/Ward-Beck-Generators.git
+	url = https://github.com/WardBeckSystems/Ward-Beck-Generators.git
 [submodule "PTP"]
 	path = PTP
 	url = https://github.com/LikeDotAudio/APK.plugin.clock.PTP.git
