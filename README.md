@@ -191,10 +191,10 @@ answers with an inert default, so any application can be left out of a build.
 | Application | Routes | Offers |
 |---|---|---|
 | `apps/patchbay` | `/api/status`, sources, routes, test tone, Bit Buddy, Reset All, restart | the TAP buses, sources and meters |
-| `apps/mxl` | `/api/mxl*` (rings, waveform, binary `/pcm`, levels, slice) | the MXL / EBU DMF shared-memory data plane |
+| `apps/mxl` | `/api/mxl*` (rings, waveform, binary `/pcm`, levels, slice), `/api/bitspitters`, `/api/bitspitter/<1·2·4·8·16>` | the MXL / EBU DMF shared-memory data plane |
 | `apps/receivers` | `/api/testpoint`, `/api/receiver` | the test point and the network / MoIP receivers |
 | `apps/aoip` | `/api/aoip*` | SAP / SDP, SIP, the PTP sniffer and the PTP leader |
-| `apps/aes67` | `/api/aes67` | AES67 transmitters (RTP + SAP per flow) |
+| `apps/aes67` | `/api/aes67` | AES67 transmitters (RTP + SAP per flow; the Bit Spitter set on .11–.15; every one GOOD / BAD / UGLY) |
 | `apps/hardware` | `/api/hw` | HW 1 / HW 2 and hardware inputs to the sound cards |
 | `apps/ntp` | `/api/ntp` | NTP status, configuration and the log of answers |
 | `apps/nmos` | `/api/nmos` | NMOS IS-04 / AoIP device discovery |

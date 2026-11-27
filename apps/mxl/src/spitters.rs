@@ -1,15 +1,18 @@
 // Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
-//! ABS-1 ×4 Bit Spitter (8 ch): four ABS-1 pairs (Generators crate, `spitter8`) written
-//! straight into their own 8-channel MXL flow, `wbs-flow-bit-spitter-8`, in the engine's
-//! domain. Eight channels cannot ride the stereo pacat path of the ABS-1 in patchbay.
+//! The Bit Spitter's own flows: 1, 2, 4, 8 and 16 channels (`wbs-flow-bit-spitter-<n>`),
+//! each a bank of ABS-1 pairs (Generators crate, `spitter8::SpitterBank`) written straight
+//! into its MXL flow in the engine's domain. Every pair has its own source, level, tone,
+//! channel B and line fault. Each flow has its own AES67 transmitter (aes67, the Bit
+//! Spitter set), where the flow itself can be made GOOD, BAD or UGLY.
 //!
-//! Control: GET / POST /api/bitspitter8 (plugin.rs)
-//!   {"active": bool, "pairs": [{"pattern", "level_db", "tone_hz", "ch_b", "fault"} ×4]}
-//! A POST merges: any field may be left out, and `pairs` may be shorter than four or hold
-//! null for a pair left as it is.
+//! Control: GET /api/bitspitters (all five), GET / POST /api/bitspitter/<n> (plugin.rs);
+//! /api/bitspitter8 is /api/bitspitter/8.
+//!   {"active": bool, "pairs": [{"pattern", "level_db", "tone_hz", "ch_b", "fault"} × pairs]}
+//! A POST merges: any field may be left out, and `pairs` may be shorter than the flow's
+//! pairs or hold null for a pair left as it is.
 //!
-//! The flow is created when the engine starts (or on the first POST) so it is listed with
-//! the engine's own flows; the synth only runs while the spitter is active.
+//! The flows are created when the engine starts (or on the first POST) so they are listed
+//! with the engine's own flows; a flow's synth only runs while it is active.
 
 use serde_json::{json, Map, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,15 +21,22 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use wbs_common as util;
-use wbs_generators::spitter8::{Pair8, Spitter8, CHANNELS, PAIRS};
+use wbs_generators::spitter8::{pairs_for, Pair8, SpitterBank, SIZES};
 
 use super::{
     clock_position, current_tai_ns, py_max, py_min, py_round, seq_max, seq_min, sleep_until, MxlFlow, CLOCK_SLIP_MAX_S,
     NUM_BINS,
 };
 
-pub const FLOW_ID: &str = "wbs-flow-bit-spitter-8";
-pub const LABEL: &str = "ABS-1 ×4 Bit Spitter (8 ch)";
+/// The flow of the `n`-channel spitter.
+pub fn flow_id(n: usize) -> String {
+    format!("wbs-flow-bit-spitter-{n}")
+}
+
+/// Its label: "ABS-1 Bit Spitter (8 ch)".
+pub fn label(n: usize) -> String {
+    format!("ABS-1 Bit Spitter ({n} ch)")
+}
 const SAMPLE_RATE: u32 = 48000;
 const QUANTUM: usize = 256;
 const BUFFER_LENGTH: usize = 480_000; // 10 s, like the engine's other flows
@@ -37,68 +47,82 @@ const FAULTS: [&str; 8] = ["clean", "noise", "badeq", "jitter", "drop", "slip", 
 
 struct State {
     active: bool,
-    pairs: [Pair8; PAIRS],
+    pairs: Vec<Pair8>,
 }
 
-/// The 8-channel spitter and its flow.
-pub struct Spitter8Out {
+/// One spitter and its flow.
+pub struct SpitterOut {
+    channels: usize,
     flow: Arc<MxlFlow>,
     state: Mutex<State>,
     run: AtomicBool,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
-static OUT: OnceLock<Arc<Spitter8Out>> = OnceLock::new();
+static OUTS: OnceLock<Vec<Arc<SpitterOut>>> = OnceLock::new();
 
-/// The process-wide spitter, its flow under the engine's base and domain.
-fn out_for(base: &str, domain_id: &str) -> &'static Arc<Spitter8Out> {
-    OUT.get_or_init(|| Spitter8Out::new(base, domain_id))
+/// The process-wide spitters (one per size), their flows under the engine's base and domain.
+fn outs_for(base: &str, domain_id: &str) -> &'static [Arc<SpitterOut>] {
+    OUTS.get_or_init(|| SIZES.iter().map(|&n| SpitterOut::new(base, domain_id, n)).collect())
 }
 
-fn out() -> &'static Arc<Spitter8Out> {
+fn outs() -> &'static [Arc<SpitterOut>] {
     let e = super::engine();
-    out_for(&e.shm_base_dir(), &e.domain_id())
+    outs_for(&e.shm_base_dir(), &e.domain_id())
 }
 
-/// Hook: the flow, once it exists (engine lookups, flow lists, rings).
-pub fn live_flow() -> Option<Arc<MxlFlow>> {
-    OUT.get().map(|o| o.flow.clone())
+fn out(n: usize) -> Result<&'static Arc<SpitterOut>, String> {
+    outs().iter().find(|o| o.channels == n).ok_or_else(|| format!("no {n}-channel Bit Spitter (sizes: 1, 2, 4, 8, 16)"))
 }
 
-/// Hook: the engine started. Make the flow and play on if the spitter was active.
+/// Hook: the flows, once they exist (engine lookups, flow lists, rings).
+pub fn live_flows() -> Vec<Arc<MxlFlow>> {
+    OUTS.get().map(|v| v.iter().map(|o| o.flow.clone()).collect()).unwrap_or_default()
+}
+
+/// Hook: the engine started. Make the flows and play on the spitters that were active.
 pub fn on_engine_start(base: &str, domain_id: &str) {
-    let o = out_for(base, domain_id);
-    o.flow.ensure_open();
-    if o.state.lock().unwrap().active {
-        o.clone().start_worker();
+    for o in outs_for(base, domain_id) {
+        o.flow.ensure_open();
+        if o.state.lock().unwrap().active {
+            o.clone().start_worker();
+        }
     }
 }
 
-/// Hook: the engine stopped. The synth stops; `active` is kept for the next start.
+/// Hook: the engine stopped. The synths stop; `active` is kept for the next start.
 pub fn on_engine_stop() {
-    if let Some(o) = OUT.get() {
+    for o in OUTS.get().map(|v| v.as_slice()).unwrap_or_default() {
         o.stop_worker();
         o.flow.close();
     }
 }
 
-/// GET /api/bitspitter8
-pub fn status() -> Value {
-    out().status()
+/// GET /api/bitspitters
+pub fn status_all() -> Value {
+    json!({"sizes": SIZES, "spitters": outs().iter().map(|o| o.status()).collect::<Vec<_>>()})
 }
 
-/// POST /api/bitspitter8
-pub fn post(body: &Map<String, Value>) -> Result<Value, String> {
-    let o = out();
+/// GET /api/bitspitter/<n>
+pub fn status(n: usize) -> Result<Value, String> {
+    Ok(out(n)?.status())
+}
+
+/// POST /api/bitspitter/<n>
+pub fn post(n: usize, body: &Map<String, Value>) -> Result<Value, String> {
+    let o = out(n)?;
     o.apply(body)?;
     Ok(o.status())
 }
 
-impl Spitter8Out {
-    fn new(base: &str, domain_id: &str) -> Arc<Spitter8Out> {
-        Arc::new(Spitter8Out {
-            flow: Arc::new(MxlFlow::new(base, domain_id, FLOW_ID, LABEL, SAMPLE_RATE, CHANNELS, BUFFER_LENGTH, QUANTUM, "generator")),
-            state: Mutex::new(State { active: false, pairs: Default::default() }),
+impl SpitterOut {
+    fn new(base: &str, domain_id: &str, channels: usize) -> Arc<SpitterOut> {
+        Arc::new(SpitterOut {
+            channels,
+            flow: Arc::new(MxlFlow::new(
+                base, domain_id, &flow_id(channels), &label(channels), SAMPLE_RATE, channels, BUFFER_LENGTH, QUANTUM, "generator",
+            )),
+            state: Mutex::new(State { active: false, pairs: vec![Pair8::default(); pairs_for(channels)] }),
             run: AtomicBool::new(false),
             thread: Mutex::new(None),
         })
@@ -115,7 +139,7 @@ impl Spitter8Out {
             "running": self.running(),
             "flow_id": self.flow.flow_id,
             "label": self.flow.label,
-            "channel_count": CHANNELS,
+            "channel_count": self.channels,
             "sample_rate": SAMPLE_RATE,
             "pairs": st.pairs.iter().map(pair_json).collect::<Vec<_>>(),
         })
@@ -129,8 +153,8 @@ impl Spitter8Out {
             match body.get("pairs") {
                 None | Some(Value::Null) => {}
                 Some(Value::Array(a)) => {
-                    if a.len() > PAIRS {
-                        return Err(format!("pairs: at most {PAIRS}"));
+                    if a.len() > pairs.len() {
+                        return Err(format!("pairs: at most {}", pairs.len()));
                     }
                     for (i, v) in a.iter().enumerate() {
                         match v {
@@ -180,8 +204,8 @@ impl Spitter8Out {
 
     fn worker(&self) {
         let mut pairs = self.state.lock().unwrap().pairs.clone();
-        let mut synth = Spitter8::new(&pairs, SAMPLE_RATE as f64);
-        let mut buf: [Vec<f64>; CHANNELS] = Default::default();
+        let mut synth = SpitterBank::new(&pairs, self.channels, SAMPLE_RATE as f64);
+        let mut buf: Vec<Vec<f64>> = Vec::new();
         let interval = QUANTUM as f64 / SAMPLE_RATE as f64;
         let start = Instant::now();
         let mut k = 0u64;
@@ -243,11 +267,12 @@ fn merge_pair(p: &mut Pair8, m: &Map<String, Value>) -> Result<(), String> {
 }
 
 /// `MxlFlow::write_frames` for any number of channels: planar samples into the ring,
-/// the first two channels into the waveform bins, then the write head and the header.
+/// the first two channels into the waveform bins (a 1-channel flow: its channel in both),
+/// then the write head and the header.
 fn write_planar(flow: &MxlFlow, chans: &[Vec<f64>]) {
     flow.ensure_open();
     let n = chans.iter().map(|c| c.len()).min().unwrap_or(0);
-    if n == 0 || chans.len() < 2 {
+    if n == 0 || chans.is_empty() {
         return;
     }
     let _w = flow.write_lock.lock().unwrap();
@@ -283,7 +308,7 @@ fn write_planar(flow: &MxlFlow, chans: &[Vec<f64>]) {
             let bin_end = buf_len.min(((bi + 1) as f64 * fpb) as usize);
             let run = (n - i).min((bin_end as i64 - pos as i64).max(1) as usize);
             let s0 = &chans[0][i..i + run];
-            let s1 = &chans[1][i..i + run];
+            let s1 = &chans[chans.len().min(2) - 1][i..i + run];
             if bi as i64 != b.last_bin {
                 b.ch0_min[bi] = 0.0;
                 b.ch0_max[bi] = 0.0;
@@ -317,7 +342,7 @@ mod tests {
     /// A scratch folder (never /dev/shm/mxl).
     fn scratch(name: &str) -> String {
         let root = std::env::var("WBS_TEST_SCRATCH").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
-        let p = std::path::Path::new(&root).join(format!("mxl-spitter8-{}-{}", name, std::process::id()));
+        let p = std::path::Path::new(&root).join(format!("mxl-spitters-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p.to_string_lossy().into_owned()
@@ -330,7 +355,7 @@ mod tests {
     #[test]
     fn eight_channels_into_the_ring() {
         let base = scratch("ring");
-        let o = Spitter8Out::new(&base, "dom");
+        let o = SpitterOut::new(&base, "dom", 8);
         let chans: Vec<Vec<f64>> = (0..8).map(|c| vec![(c + 1) as f64 / 10.0; 300]).collect();
         write_planar(&o.flow, &chans);
         assert_eq!(o.flow.write_head(), 300);
@@ -339,15 +364,15 @@ mod tests {
         for (c, ch) in planar.iter().enumerate() {
             assert!(ch.iter().all(|&v| v == ((c + 1) as f64 / 10.0) as f32), "channel {c}");
         }
-        let def: Value = serde_json::from_str(&std::fs::read_to_string(format!("{base}/dom/{FLOW_ID}/flow_def.json")).unwrap()).unwrap();
-        assert_eq!((def["channel_count"].as_u64(), def["label"].as_str()), (Some(8), Some(LABEL)));
+        let def: Value = serde_json::from_str(&std::fs::read_to_string(format!("{base}/dom/{}/flow_def.json", flow_id(8))).unwrap()).unwrap();
+        assert_eq!((def["channel_count"].as_u64(), def["label"].as_str()), (Some(8), Some(label(8).as_str())));
         let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
     fn post_merges_and_checks() {
         let base = scratch("post");
-        let o = Spitter8Out::new(&base, "dom");
+        let o = SpitterOut::new(&base, "dom", 8);
         o.apply(&obj(json!({"pairs": [null, {"pattern": "tone", "level_db": null, "tone_hz": 400, "ch_b": "invert", "fault": "jitter"}]})))
             .unwrap();
         let s = o.status();
@@ -367,7 +392,7 @@ mod tests {
     #[test]
     fn activate_plays_and_deactivate_silences() {
         let base = scratch("run");
-        let o = Spitter8Out::new(&base, "dom");
+        let o = SpitterOut::new(&base, "dom", 8);
         let tone = json!({"pattern": "tone", "level_db": 0, "tone_hz": 1000, "ch_b": "same", "fault": "clean"});
         let off = json!({"pattern": "tone", "level_db": null});
         o.apply(&obj(json!({"active": true, "pairs": [tone, off, tone, {"ch_b": "off", "pattern": "minmax"}]}))).unwrap();
@@ -383,6 +408,29 @@ mod tests {
         o.apply(&obj(json!({"active": false}))).unwrap();
         assert_eq!(o.status()["running"], false);
         assert!(o.flow.read_planar(0, w).iter().all(|c| c.iter().all(|&v| v == 0.0)), "ring cleared");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn every_size_has_its_own_flow() {
+        let base = scratch("sizes");
+        for &n in &SIZES {
+            let o = SpitterOut::new(&base, "dom", n);
+            let tone = json!({"pattern": "tone", "level_db": 0, "tone_hz": 1000, "ch_b": "same", "fault": "clean"});
+            let pairs: Vec<Value> = (0..pairs_for(n)).map(|_| tone.clone()).collect();
+            o.apply(&obj(json!({"active": true, "pairs": pairs}))).unwrap();
+            std::thread::sleep(Duration::from_millis(60));
+            let s = o.status();
+            assert_eq!((s["channel_count"].as_u64(), s["pairs"].as_array().unwrap().len()), (Some(n as u64), pairs_for(n)));
+            assert_eq!(s["flow_id"], format!("wbs-flow-bit-spitter-{n}"));
+            let w = o.flow.write_head();
+            let p = o.flow.read_planar(0, w);
+            assert_eq!(p.len(), n);
+            assert!(p.iter().all(|c| c.iter().fold(0f32, |m, v| m.max(v.abs())) > 0.99), "{n} ch: every channel plays");
+            let too_many: Vec<Value> = (0..pairs_for(n) + 1).map(|_| json!({})).collect();
+            assert!(o.apply(&obj(json!({"pairs": too_many}))).is_err());
+            o.apply(&obj(json!({"active": false}))).unwrap();
+        }
         let _ = std::fs::remove_dir_all(&base);
     }
 }

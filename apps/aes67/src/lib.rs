@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ward-Beck Systems (Ward-Beck.com - Ward-Beck.ca). All rights reserved.
 //! AES67 transmitters: one per engine MXL flow, the router's MXL67-1 … 4 (Repeater,
-//! POD-33 1 kHz, POD-33 400 / 100 Hz, Bit Spitter), and the loop outs MXL67-5 / 6 that
+//! POD-33 1 kHz, POD-33 400 / 100 Hz, Bit Spitter), the Bit Spitter's own set (its 1, 2,
+//! 4, 8 and 16-channel flows, groups .11 … .15), and the loop outs MXL67-5 / 6 that
 //! re-send the network / MoIP receivers' AMS-81 stereo fold-downs (read through the
 //! receivers service). A loop out whose receiver is taking one of this TAP's own groups
 //! stays silent ("loop: receiving its own stream"). Each reads its flow's ring behind the write head and sends
@@ -21,6 +22,11 @@
 //!             Renaming bumps the SDP version (o=), withdraws the old SAP announcement,
 //!             announces the new one at once and re-registers the Bonjour record.
 //!
+//!   quality   every transmitter sends GOOD (as is), BAD or UGLY (lost, late, re-ordered
+//!             and doubled packets; UGLY adds loss bursts, wrong timestamps and damaged
+//!             payloads), counted in its status ("impairments"). Set by POST
+//!             {"flow_id", "quality": "good" | "bad" | "ugly"}.
+//!
 //! Transmitters are off until asked for (POST /api/aes67, or WBS_AES67=all at start).
 //! WBS_DRY_RUN=1 builds packets but never opens a socket (unless WBS_AES67_TTL=0: host-only),
 //! and then runs no mDNS and no RTSP either.
@@ -37,7 +43,7 @@ use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -56,6 +62,17 @@ const MAX_QUEUE_FRAMES: usize = 9600; // 200 ms
 /// Other flows (the 8-channel Bit Spitter, the multichannel test flows) do not.
 pub const ENGINE_FLOWS: [&str; 4] =
     ["wbs-flow-master-stereo", "wbs-flow-ref-tone", "wbs-flow-ref-tone-low", "wbs-flow-bit-spitter"];
+/// The Bit Spitter's own transmitters: its 1, 2, 4, 8 and 16-channel flows (mxl spitters),
+/// groups .11 … .15 (by-id 11 … 15).
+pub const SPITTER_FLOWS: [(usize, &str); 5] = [
+    (1, "wbs-flow-bit-spitter-1"),
+    (2, "wbs-flow-bit-spitter-2"),
+    (4, "wbs-flow-bit-spitter-4"),
+    (8, "wbs-flow-bit-spitter-8"),
+    (16, "wbs-flow-bit-spitter-16"),
+];
+/// Group index of the first Bit Spitter transmitter (.11).
+pub const SPITTER_INDEX: usize = 10;
 /// The loop outs, MXL67-5 / 6 (groups .5 / .6): the receivers' AMS-81 fold-downs, 48 kHz stereo.
 pub const LOOP_OUTS: [(&str, &str); 2] = [("wbs-network-ams81", "Network loop out"), ("wbs-moip-ams81", "MoIP loop out")];
 const LOOP_ERROR: &str = "loop: receiving its own stream";
@@ -100,9 +117,178 @@ pub fn group_for(index: usize) -> Ipv4Addr {
     Ipv4Addr::new(239, 69, host[3], n)
 }
 
-/// Every group this TAP transmits on (.1 … .6), whether running or not.
+/// Every group this TAP transmits on (.1 … .6, .11 … .15), whether running or not.
 pub fn groups() -> Vec<Ipv4Addr> {
-    (0..ENGINE_FLOWS.len() + LOOP_OUTS.len()).map(group_for).collect()
+    (0..ENGINE_FLOWS.len() + LOOP_OUTS.len()).chain(SPITTER_INDEX..SPITTER_INDEX + SPITTER_FLOWS.len()).map(group_for).collect()
+}
+
+/// How clean a transmitter's packets are.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Quality {
+    /// Every packet on time, as made.
+    Good,
+    /// A busy network: the odd packet lost, late, re-ordered or doubled.
+    Bad,
+    /// A broken one: loss bursts, late and re-ordered packets, doubles, wrong
+    /// timestamps and damaged payloads.
+    Ugly,
+}
+
+impl Quality {
+    pub const ALL: [Quality; 3] = [Quality::Good, Quality::Bad, Quality::Ugly];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Quality::Good => "good",
+            Quality::Bad => "bad",
+            Quality::Ugly => "ugly",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Quality> {
+        Quality::ALL.into_iter().find(|q| q.name().eq_ignore_ascii_case(s.trim()))
+    }
+
+    fn from_u8(v: u8) -> Quality {
+        Quality::ALL[(v as usize).min(2)]
+    }
+
+    /// Per-packet odds: (loss, burst start, late, re-order, double, bad timestamp, damaged).
+    fn odds(self) -> [f64; 7] {
+        match self {
+            Quality::Good => [0.0; 7],
+            Quality::Bad => [0.005, 0.0, 0.003, 0.002, 0.001, 0.0, 0.0],
+            Quality::Ugly => [0.03, 0.003, 0.02, 0.02, 0.01, 0.005, 0.005],
+        }
+    }
+}
+
+/// What the impairments did, packet by packet.
+#[derive(Default)]
+pub struct ImpairStats {
+    pub lost: AtomicU64,
+    pub late: AtomicU64,
+    pub reordered: AtomicU64,
+    pub doubled: AtomicU64,
+    pub bad_timestamp: AtomicU64,
+    pub damaged: AtomicU64,
+}
+
+impl ImpairStats {
+    fn json(&self) -> Value {
+        let g = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        json!({
+            "lost": g(&self.lost), "late": g(&self.late), "reordered": g(&self.reordered),
+            "doubled": g(&self.doubled), "bad_timestamp": g(&self.bad_timestamp), "damaged": g(&self.damaged),
+        })
+    }
+
+    fn reset(&self) {
+        for a in [&self.lost, &self.late, &self.reordered, &self.doubled, &self.bad_timestamp, &self.damaged] {
+            a.store(0, Ordering::Relaxed);
+        }
+    }
+}
+
+/// The network between a transmitter and its receivers: takes each packet as made and
+/// gives back what goes on the wire this millisecond (none, it, it twice, or packets
+/// held back earlier). Late packets are held 3-40 ms, past a receiver's link offset.
+pub struct Impairment {
+    seed: u64,
+    n: u64,
+    burst: u32,
+    /// (send at packet n, packet)
+    held: Vec<(u64, Vec<u8>)>,
+}
+
+impl Impairment {
+    pub fn new(seed: u64) -> Self {
+        Impairment { seed: seed | 1, n: 0, burst: 0, held: Vec::new() }
+    }
+
+    fn rnd(&mut self) -> f64 {
+        let mut x = self.seed;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.seed = x;
+        (x >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    fn range(&mut self, lo: u64, hi: u64) -> u64 {
+        lo + (self.rnd() * (hi - lo + 1) as f64) as u64 % (hi - lo + 1)
+    }
+
+    /// One packet in, what to send now out. `Good` passes it straight through (and lets
+    /// anything still held go).
+    pub fn step(&mut self, q: Quality, mut pkt: Vec<u8>, stats: &ImpairStats) -> Vec<Vec<u8>> {
+        self.n += 1;
+        let n = self.n;
+        let mut out = Vec::new();
+        // Held packets whose time has come go first (they are older).
+        let mut k = 0;
+        while k < self.held.len() {
+            if self.held[k].0 <= n {
+                out.push(self.held.remove(k).1);
+            } else {
+                k += 1;
+            }
+        }
+        if q == Quality::Good {
+            out.push(pkt);
+            return out;
+        }
+        let [loss, burst, late, reorder, double, bad_ts, damaged] = q.odds();
+        if self.burst > 0 {
+            self.burst -= 1;
+            stats.lost.fetch_add(1, Ordering::Relaxed);
+            return out;
+        }
+        if self.rnd() < burst {
+            self.burst = self.range(5, 50) as u32 - 1;
+            stats.lost.fetch_add(1, Ordering::Relaxed);
+            return out;
+        }
+        if self.rnd() < loss {
+            stats.lost.fetch_add(1, Ordering::Relaxed);
+            return out;
+        }
+        if pkt.len() >= 12 && self.rnd() < bad_ts {
+            // The RTP timestamp 1-10 ms off, either way
+            let ts = u32::from_be_bytes([pkt[4], pkt[5], pkt[6], pkt[7]]);
+            let off = (self.range(1, 10) * PTIME_FRAMES as u64) as u32;
+            let ts = if self.rnd() < 0.5 { ts.wrapping_add(off) } else { ts.wrapping_sub(off) };
+            pkt[4..8].copy_from_slice(&ts.to_be_bytes());
+            stats.bad_timestamp.fetch_add(1, Ordering::Relaxed);
+        }
+        if pkt.len() > 12 && self.rnd() < damaged {
+            // A run of payload bytes scrambled (full-scale clicks in the audio)
+            let len = pkt.len() - 12;
+            let start = 12 + self.range(0, len as u64 - 1) as usize;
+            let run = self.range(3, 24).min((pkt.len() - start) as u64) as usize;
+            for i in 0..run {
+                pkt[start + i] = (self.rnd() * 256.0) as u8;
+            }
+            stats.damaged.fetch_add(1, Ordering::Relaxed);
+        }
+        if self.rnd() < late {
+            let hold = if q == Quality::Ugly { self.range(5, 40) } else { self.range(3, 5) };
+            self.held.push((n + hold, pkt));
+            stats.late.fetch_add(1, Ordering::Relaxed);
+            return out;
+        }
+        if self.rnd() < reorder {
+            self.held.push((n + 1, pkt)); // goes out after the next one
+            stats.reordered.fetch_add(1, Ordering::Relaxed);
+            return out;
+        }
+        if self.rnd() < double {
+            out.push(pkt.clone());
+            stats.doubled.fetch_add(1, Ordering::Relaxed);
+        }
+        out.push(pkt);
+        out
+    }
 }
 
 /// A receiver taking `source` would feed one of our own groups back into a loop out.
@@ -217,6 +403,8 @@ fn multicast_socket() -> std::io::Result<Socket> {
 }
 
 struct Tx {
+    /// Group index: group .index+1, RTSP by-id index+1.
+    index: usize,
     flow_id: String,
     label: String,
     /// The SDP's s= (and the Bonjour instance name); label until renamed.
@@ -229,6 +417,9 @@ struct Tx {
     channels: usize,
     sample_rate: u32,
     source: Source,
+    /// Quality as a u8 (Quality::ALL index), read by the sender every packet.
+    quality: Arc<AtomicU8>,
+    impair: Arc<ImpairStats>,
     running: Arc<AtomicBool>,
     packets: Arc<AtomicU64>,
     underruns: Arc<AtomicU64>,
@@ -250,6 +441,10 @@ impl Tx {
             "flow_id": self.flow_id,
             "label": self.label,
             "loop_out": self.source == Source::LoopOut,
+            "bit_spitter_set": self.index >= SPITTER_INDEX,
+            "by_id": self.index + 1,
+            "quality": Quality::from_u8(self.quality.load(Ordering::Relaxed)).name(),
+            "impairments": self.impair.json(),
             "name": self.name,
             "version": self.version,
             "running": on,
@@ -284,6 +479,9 @@ fn state() -> &'static Mutex<State> {
     S.get_or_init(|| {
         let mxl = services::mxl();
         let tx = |index: usize, flow_id: &str, label: String, channels: usize, sample_rate: u32, source: Source| Tx {
+            index,
+            quality: Arc::new(AtomicU8::new(0)),
+            impair: Arc::new(ImpairStats::default()),
             flow_id: flow_id.to_string(),
             name: label.clone(),
             label,
@@ -311,6 +509,10 @@ fn state() -> &'static Mutex<State> {
         // The loop outs always exist (by-id 5 / 6); they send once their receiver has audio.
         for (k, (id, label)) in LOOP_OUTS.iter().enumerate() {
             txs.push(tx(ENGINE_FLOWS.len() + k, id, label.to_string(), 2, 48000, Source::LoopOut));
+        }
+        // The Bit Spitter's own set: always listed (the flows are made when the engine starts).
+        for (k, (n, id)) in SPITTER_FLOWS.iter().enumerate() {
+            txs.push(tx(SPITTER_INDEX + k, id, format!("Bit Spitter {n} ch"), *n, 48000, Source::Engine));
         }
         Mutex::new(State { txs, sap_thread: None })
     })
@@ -354,6 +556,8 @@ fn sender(
     trims: Arc<AtomicU64>,
     rate: Arc<AtomicU64>,
     error: Arc<Mutex<Option<String>>>,
+    quality: Arc<AtomicU8>,
+    impair: Arc<ImpairStats>,
 ) {
     let sock = if dry_run() {
         None
@@ -369,6 +573,7 @@ fn sender(
     };
     let dest = SockAddr::from(SocketAddrV4::new(group, port()));
     let ssrc = fnv(&flow_id);
+    let mut net = Impairment::new(ssrc as u64 ^ current_tai_ns() as u64);
     let eng = services::mxl();
     let fetch = |since: i64, max: usize| match source {
         Source::Engine => eng.flow_pcm(&flow_id, since, max),
@@ -478,9 +683,12 @@ fn sender(
                 f
             };
             let pkt = rtp_packet(seq, ts, ssrc, &frames);
-            if let Some(s) = sock.as_ref().filter(|_| !looped) {
-                if let Err(e) = s.send_to(&pkt, &dest) {
-                    *error.lock().unwrap() = Some(format!("send: {e}"));
+            let q = Quality::from_u8(quality.load(Ordering::Relaxed));
+            for pkt in net.step(q, pkt, &impair) {
+                if let Some(s) = sock.as_ref().filter(|_| !looped) {
+                    if let Err(e) = s.send_to(&pkt, &dest) {
+                        *error.lock().unwrap() = Some(format!("send: {e}"));
+                    }
                 }
             }
             seq = seq.wrapping_add(1);
@@ -556,14 +764,23 @@ fn start_tx(st: &mut State, i: usize) {
     t.underruns.store(0, Ordering::Relaxed);
     t.trims.store(0, Ordering::Relaxed);
     t.rate.store(1.0f64.to_bits(), Ordering::Relaxed);
+    t.impair.reset();
     t.running.store(true, Ordering::Release);
     t.started_at = Some(wbs_common::now_f64());
     let (id, src, g, sr) = (t.flow_id.clone(), t.source, t.group, t.sample_rate);
     let (r, p, u, tr, ra, e) =
         (t.running.clone(), t.packets.clone(), t.underruns.clone(), t.trims.clone(), t.rate.clone(), t.error.clone());
-    t.thread = Some(std::thread::spawn(move || sender(id, src, g, sr, r, p, u, tr, ra, e)));
+    let (q, im) = (t.quality.clone(), t.impair.clone());
+    t.thread = Some(std::thread::spawn(move || sender(id, src, g, sr, r, p, u, tr, ra, e, q, im)));
     println!("[AES67] TX {} -> {}:{} (L24/{}/{} 1 ms)", t.flow_id, t.group, port(), t.sample_rate, t.channels);
-    bonjour_register(t, i);
+    bonjour_register(t);
+    // Announce now: the announcer's next round may be up to 30 s away (it is
+    // already running for the other transmitters).
+    let already = st.sap_thread.as_ref().is_some_and(|h| !h.is_finished());
+    if already {
+        let t = &st.txs[i];
+        send_sap(&t.flow_id, t.version, &t.sdp(), false);
+    }
     ensure_sap_thread(st);
 }
 
@@ -601,7 +818,7 @@ fn rename_tx(st: &mut State, i: usize, name: Option<String>) {
     t.version = t.version.wrapping_add(1);
     if on {
         send_sap(&t.flow_id, t.version, &t.sdp(), false);
-        bonjour_register(t, i);
+        bonjour_register(t);
     }
 }
 
@@ -615,8 +832,8 @@ fn wanted_on(enabled: Option<bool>, has_name: bool, running: bool) -> Option<boo
     }
 }
 
-/// POST /api/aes67  {"flow_id": "...", "enabled": true|false, "name": "..."}  or
-/// {"all": true|false}. With neither "enabled" nor "name" the named transmitter toggles;
+/// POST /api/aes67  {"flow_id": "...", "enabled": true|false, "name": "...", "quality": "good|bad|ugly"}
+/// or {"all": true|false}. With none of "enabled", "name" or "quality" the named transmitter toggles;
 /// an empty (or null) name goes back to the default.
 pub fn control(body: &serde_json::Map<String, Value>) -> Result<Value, String> {
     {
@@ -638,7 +855,22 @@ pub fn control(body: &serde_json::Map<String, Value>) -> Result<Value, String> {
                 Some(Value::String(s)) => Some(sanitize_name(s)),
                 Some(_) => return Err("name must be a string".into()),
             };
-            let on = wanted_on(body.get("enabled").and_then(|v| v.as_bool()), name.is_some(), st.txs[i].running.load(Ordering::Acquire));
+            let quality = match body.get("quality") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(s)) => Some(Quality::parse(s).ok_or_else(|| format!("quality: {s} is not good | bad | ugly"))?),
+                Some(_) => return Err("quality must be good | bad | ugly".into()),
+            };
+            let on = wanted_on(
+                body.get("enabled").and_then(|v| v.as_bool()),
+                name.is_some() || quality.is_some(),
+                st.txs[i].running.load(Ordering::Acquire),
+            );
+            if let Some(q) = quality {
+                let idx = Quality::ALL.iter().position(|x| *x == q).unwrap() as u8;
+                if st.txs[i].quality.swap(idx, Ordering::AcqRel) != idx {
+                    println!("[AES67] TX {} quality {}", st.txs[i].flow_id, q.name());
+                }
+            }
             if let Some(n) = name {
                 rename_tx(&mut st, i, n);
             }
@@ -736,10 +968,10 @@ fn mdns_host() -> String {
     format!("{}.local.", if h.is_empty() { "ward-beck-tap" } else { h })
 }
 
-fn bonjour_register(t: &mut Tx, i: usize) {
+fn bonjour_register(t: &mut Tx) {
     let (Some(d), Some(port)) = (mdns(), rtsp_listening()) else { return };
     bonjour_unregister(t);
-    let props = [("id", (i + 1).to_string()), ("flow", t.flow_id.clone())];
+    let props = [("id", (t.index + 1).to_string()), ("flow", t.flow_id.clone())];
     match ServiceInfo::new(MDNS_TYPE, &t.name, &mdns_host(), host_v4().to_string(), port, &props[..]) {
         Ok(info) => {
             let full = info.get_fullname().to_string();
@@ -765,7 +997,7 @@ fn bonjour_unregister(t: &mut Tx) {
 #[derive(Debug, PartialEq)]
 pub enum RtspTarget {
     ByName(String),
-    /// 1-based, the router's MXL67-n (1 … 6).
+    /// 1-based: the router's MXL67-n (1 … 6), the Bit Spitter set 11 … 15.
     ById(usize),
 }
 
@@ -860,7 +1092,7 @@ pub fn rtsp_reply(text: &str, lookup: impl Fn(&RtspTarget) -> Option<String>) ->
 fn rtsp_lookup(t: &RtspTarget) -> Option<String> {
     let st = state().lock().unwrap();
     let tx = match t {
-        RtspTarget::ById(n) => st.txs.get(n - 1),
+        RtspTarget::ById(n) => st.txs.iter().find(|x| x.index + 1 == *n),
         RtspTarget::ByName(name) => st.txs.iter().find(|x| &x.name == name),
     }?;
     tx.running.load(Ordering::Acquire).then(|| tx.sdp())
@@ -1042,8 +1274,8 @@ mod tests {
     fn loop_outs() {
         assert_eq!(LOOP_OUTS.map(|l| l.0), ["wbs-network-ams81", "wbs-moip-ams81"]);
         let g = super::groups();
-        assert_eq!(g.len(), 6);
-        assert_eq!(g.iter().map(|x| x.octets()[3]).collect::<Vec<_>>(), [1, 2, 3, 4, 5, 6]);
+        assert_eq!(g.len(), 11);
+        assert_eq!(g.iter().map(|x| x.octets()[3]).collect::<Vec<_>>(), [1, 2, 3, 4, 5, 6, 11, 12, 13, 14, 15]);
         let ours = [Ipv4Addr::new(239, 69, 7, 1), Ipv4Addr::new(239, 69, 7, 5)];
         assert!(is_loop(Some("239.69.7.5"), &ours));
         assert!(is_loop(Some(" 239.69.7.1"), &ours));
@@ -1056,5 +1288,58 @@ mod tests {
     fn groups() {
         assert_eq!(group_for(0).octets()[0..2], [239, 69]);
         assert_eq!(group_for(2).octets()[3], 3);
+    }
+
+    #[test]
+    fn bit_spitter_set() {
+        assert_eq!(SPITTER_FLOWS.map(|f| f.0), [1, 2, 4, 8, 16]);
+        assert_eq!(group_for(SPITTER_INDEX).octets()[3], 11);
+        assert_eq!(group_for(SPITTER_INDEX + 4).octets()[3], 15);
+    }
+
+    #[test]
+    fn quality_names() {
+        assert_eq!(Quality::parse(" UGLY"), Some(Quality::Ugly));
+        assert_eq!(Quality::parse("bad"), Some(Quality::Bad));
+        assert_eq!(Quality::parse("fine"), None);
+        assert_eq!(Quality::ALL.map(|q| q.name()), ["good", "bad", "ugly"]);
+    }
+
+    /// Run `n` packets (seq in the header) through an impairment; what came out, in order.
+    fn wire(q: Quality, n: u16) -> (Vec<Vec<u8>>, ImpairStats) {
+        let stats = ImpairStats::default();
+        let mut net = Impairment::new(0x5eed);
+        let mut out = Vec::new();
+        for s in 0..n {
+            out.extend(net.step(q, rtp_packet(s, s as u32 * 48, 1, &vec![vec![0.25f32, -0.25]; 48]), &stats));
+        }
+        (out, stats)
+    }
+
+    #[test]
+    fn good_is_untouched() {
+        let (out, st) = wire(Quality::Good, 5000);
+        assert_eq!(out.len(), 5000);
+        assert!(out.iter().enumerate().all(|(i, p)| u16::from_be_bytes([p[2], p[3]]) == i as u16));
+        assert_eq!(st.json(), json!({"lost": 0, "late": 0, "reordered": 0, "doubled": 0, "bad_timestamp": 0, "damaged": 0}));
+    }
+
+    #[test]
+    fn bad_and_ugly_break_the_flow() {
+        let (bad, b) = wire(Quality::Bad, 20000);
+        let (ugly, u) = wire(Quality::Ugly, 20000);
+        let g = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        for (name, st) in [("bad", &b), ("ugly", &u)] {
+            assert!(g(&st.lost) > 0 && g(&st.late) > 0 && g(&st.reordered) > 0 && g(&st.doubled) > 0, "{name}: {}", st.json());
+        }
+        assert_eq!((g(&b.bad_timestamp), g(&b.damaged)), (0, 0), "BAD keeps stamps and payloads");
+        assert!(g(&u.bad_timestamp) > 0 && g(&u.damaged) > 0, "UGLY: {}", u.json());
+        assert!(g(&u.lost) > 5 * g(&b.lost), "UGLY loses far more: {} vs {}", g(&u.lost), g(&b.lost));
+        // Out of order: some packet arrives after a later one
+        let seqs = |v: &[Vec<u8>]| v.iter().map(|p| u16::from_be_bytes([p[2], p[3]])).collect::<Vec<_>>();
+        for (name, v) in [("bad", seqs(&bad)), ("ugly", seqs(&ugly))] {
+            assert!(v.windows(2).any(|w| w[1] < w[0]), "{name}: something out of order");
+            assert!(v.windows(2).any(|w| w[1] == w[0]), "{name}: something doubled");
+        }
     }
 }

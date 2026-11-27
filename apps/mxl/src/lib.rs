@@ -16,8 +16,8 @@ pub mod plugin;
 pub use plugin::plug;
 // The 8-channel ID and diagonal generator flows.
 mod multichannel;
-// ABS-1 ×4 Bit Spitter: its own 8-channel flow (GET / POST /api/bitspitter8).
-pub mod spitter8;
+// The Bit Spitter's own flows, 1 / 2 / 4 / 8 / 16 channels (GET / POST /api/bitspitter/<n>).
+pub mod spitters;
 
 use memmap2::{Mmap, MmapMut};
 use serde_json::{json, Map, Value};
@@ -1355,7 +1355,7 @@ impl MxlEngine {
 
     pub fn flow(&self, flow_id: &str) -> Option<Arc<MxlFlow>> {
         self.inner.flows.iter().find(|f| f.flow_id == flow_id).cloned()
-            .or_else(|| spitter8::live_flow().filter(|f| f.flow_id == flow_id))
+            .or_else(|| spitters::live_flows().into_iter().find(|f| f.flow_id == flow_id))
     }
 
     pub fn master_flow(&self) -> Arc<MxlFlow> {
@@ -1371,7 +1371,7 @@ impl MxlEngine {
     }
 
     pub fn flow_ids(&self) -> Vec<String> {
-        self.inner.flows.iter().chain(spitter8::live_flow().as_ref()).map(|f| f.flow_id.clone()).collect()
+        self.inner.flows.iter().chain(spitters::live_flows().iter()).map(|f| f.flow_id.clone()).collect()
     }
 
     /// Creates and populates the 'Ward-Beck Test Signals' MXL domain (domain_def.json,
@@ -1501,7 +1501,7 @@ impl MxlEngine {
             let i = inner.clone();
             *inner.meter_thread.lock().unwrap() = Some(std::thread::spawn(move || i.meter_worker()));
         }
-        spitter8::on_engine_start(&inner.base, &inner.domain_id);
+        spitters::on_engine_start(&inner.base, &inner.domain_id);
     }
 
     /// Stops all workers, terminates the parec bridge, closes the flows and releases flocks.
@@ -1514,7 +1514,7 @@ impl MxlEngine {
         for f in &inner.flows {
             f.close();
         }
-        spitter8::on_engine_stop();
+        spitters::on_engine_stop();
         release_locks(&mut inner.lock_fds.lock().unwrap());
     }
 
@@ -1576,7 +1576,7 @@ impl MxlEngine {
         json!({
             "tai_ns": current_tai_ns(),
             "ntp_sec": f64v(util::now_f64()),
-            "flows": self.inner.flows.iter().chain(spitter8::live_flow().as_ref()).map(|f| f.ring_snapshot(bins)).collect::<Vec<_>>(),
+            "flows": self.inner.flows.iter().chain(spitters::live_flows().iter()).map(|f| f.ring_snapshot(bins)).collect::<Vec<_>>(),
         })
     }
 
